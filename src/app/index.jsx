@@ -4,7 +4,7 @@ import { AiChatFooter } from '../components/AiChatFooter';
 import Header from '../components/Header';
 import { ObjectList } from '../components/ObjectList';
 import { PropertyPanel } from '../components/PropertyPanel';
-import { Toolbar } from '../components/ToolBar';
+import { Toolbar } from '../components/Toolbar';
 import { useCanvas } from '../hooks/useCanvas';
 
 // 初始数据
