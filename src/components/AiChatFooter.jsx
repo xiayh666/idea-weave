@@ -26,3 +26,30 @@ export const AiChatFooter = ({ input, setInput, handleAICommand }) => (
     </div>
   </footer>
 );
+
+// 在 AiChatFooter.jsx 中或独立的服务文件中
+const callAiApi = async (userInput, currentObjects) => {
+  const API_KEY = "sk-4ddc42fea38a4368b93263d55f0b59cd";
+  const SYSTEM_PROMPT = `你是一个绘图助手。根据用户指令，返回一个 JSON 数组，包含要执行的操作。
+  支持操作：
+  1. {"type": "CREATE", "shape": "rect"|"circle", "color": "hex"}
+  2. {"type": "ANIMATE", "targetId": "id", "animation": "rotate"|"scale"|"move"}
+  
+  当前画布对象：${JSON.stringify(currentObjects.map(o => ({id: o.id, name: o.name})))}
+  只返回 JSON，不要任何解释。`;
+
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${API_KEY}` },
+    body: JSON.stringify({
+      model: "gpt-4-turbo-preview", // 或其他模型
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: userInput }
+      ],
+      response_format: { type: "json_object" } // 强制 JSON
+    })
+  });
+  const data = await response.json();
+  return JSON.parse(data.choices[0].message.content);
+};

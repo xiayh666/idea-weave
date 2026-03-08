@@ -13,6 +13,38 @@ const INITIAL_OBJECTS = [
   { id: 'obj-2', name: 'Title_Text', type: 'text', x: 250, y: 80, text: 'Hello IdeaWeave', fontSize: 24, fillColor: '#1e293b', behaviors: [] }
 ];
 
+// 模拟一个发送给 AI 的函数
+const askAI = async (userInput, currentObjects) => {
+  const API_KEY = "sk-4ddc42fea38a4368b93263d55f0b59cd"; // 记得换成你申请的 key
+  const BASE_URL = "https://api.deepseek.com/v1/chat/completions";
+
+  // 这是给 AI 的“说明书”，告诉它必须按我们的格式回话
+  const systemPrompt = `你是一个绘图助手。请根据用户指令返回 JSON。
+  当前物体列表：${JSON.stringify(currentObjects.map(o => ({id: o.id, name: o.name})))}
+  
+  如果是创建，返回：{"type":"CREATE", "shape":"rect", "color":"#3862f6"}
+  如果是让某个物体动，返回：{"type":"ANIMATE", "id":"物体的id", "action":"旋转"}`;
+
+  const response = await fetch(BASE_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${API_KEY}`
+    },
+    body: JSON.stringify({
+      model: "deepseek-chat",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userInput }
+      ],
+      response_format: { type: "json_object" } // 强行要求返回JSON
+    })
+  });
+
+  const resData = await response.json();
+  return JSON.parse(resData.choices[0].message.content);
+};
+
 export default function App() {
   const [objects, setObjects] = useState(INITIAL_OBJECTS);
   const [selectedId, setSelectedId] = useState(INITIAL_OBJECTS[0].id);
@@ -71,25 +103,46 @@ export default function App() {
 
 
 
-  const handleAICommand = (cmd) => {
+  const handleAICommand = async (cmd) => {
     if (!cmd.trim()) return;
-    const ts = Date.now();
-    const newId = `obj-${objects.length + 1}`;
-    let newObj = null;
 
-    if (cmd.includes('正方形') || cmd.includes('旋转')) {
-      newObj = { id: newId, name: `Object_${objects.length + 1}`, type: 'rect', x: 200 + Math.random() * 400, y: 150 + Math.random() * 200, width: 120, height: 120, fillColor: '#3862f6', borderRadius: 8, behaviors: [{ id: `bh-${ts}`, name: '点击旋转', desc: 'mousedown → 旋转360°' }] };
-    } else if (cmd.includes('圆') || cmd.includes('变大')) {
-      newObj = { id: newId, name: `Object_${objects.length + 1}`, type: 'circle', x: 200 + Math.random() * 400, y: 150 + Math.random() * 200, width: 100, height: 100, fillColor: '#f43f5e', borderRadius: 50, behaviors: [{ id: `bh-${ts}`, name: '点击变大', desc: 'mousedown → 比例变大' }] };
-    } else if (cmd.includes('移动')) {
-      newObj = { id: newId, name: `Object_${objects.length + 1}`, type: 'rect', x: 200 + Math.random() * 400, y: 150 + Math.random() * 200, width: 100, height: 100, fillColor: '#10b981', borderRadius: 8, behaviors: [{ id: `bh-${ts}`, name: '点击随机移动', desc: 'mousedown → 随机移动' }] };
-    }
+    console.log("正在思考指令:", cmd);
 
-    if (newObj) {
-      setObjects([...objects, newObj]);
-      setSelectedId(newId);
-      setInput('');
-      if (mode === 'edit') handleSelect(newId);
+    try {
+      // 1. 调用刚才写的翻译官函数
+      const result = await askAI(cmd, objects);
+      console.log("AI 返回了结果:", result);
+
+      // 2. 根据 AI 的要求更新画布数据
+      if (result.type === 'CREATE') {
+        const newId = `obj-${Date.now()}`;
+        const newObj = {
+          id: newId,
+          name: `AI_Object_${objects.length + 1}`,
+          type: result.shape || 'rect',
+          x: 300 + Math.random() * 100, // 随机放个位置
+          y: 200 + Math.random() * 100,
+          width: 120,
+          height: 120,
+          fillColor: result.color || '#3862f6',
+          borderRadius: 8,
+          behaviors: [] // 初始没动作
+        };
+        setObjects([...objects, newObj]); // 把新物体塞进数组
+        setSelectedId(newId);
+      } 
+      else if (result.type === 'ANIMATE') {
+        // 让某个物体动起来，就是给它的 behaviors 数组加东西
+        const ts = Date.now();
+        updateObject(result.id, {
+          behaviors: [{ id: `bh-${ts}`, name: `点击${result.action}` }]
+        });
+      }
+
+      setInput(''); // 清空输入框
+    } catch (error) {
+      console.error("AI 好像开小差了:", error);
+      alert("AI 响应失败，请检查网络或 API Key");
     }
   };
 
@@ -158,3 +211,4 @@ export default function App() {
     </div>
   );
 }
+
