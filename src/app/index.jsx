@@ -1,48 +1,53 @@
-import { Trash2 } from 'lucide-react';
+import { Trash2 } from 'lucide-react-native';
 import { useCallback, useEffect, useState } from 'react';
+import { Dimensions, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { AiChatFooter } from '../components/AiChatFooter';
 import Header from '../components/Header';
 import { ObjectList } from '../components/ObjectList';
 import { PropertyPanel } from '../components/PropertyPanel';
 import { Toolbar } from '../components/Toolbar';
-import { useCanvas } from '../hooks/useCanvas';
+import { CanvasRenderer, useCanvas } from '../hooks/useCanvas';
 
-// 初始数据
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const isMobile = Platform.OS !== 'web';
+
 const INITIAL_OBJECTS = [
-  { id: 'obj-1', name: 'Object_1', type: 'rect', x: 250, y: 150, width: 128, height: 128, fillColor: '#3862f6', borderRadius: 8, behaviors: [] },
-  { id: 'obj-2', name: 'Title_Text', type: 'text', x: 250, y: 80, text: 'Hello IdeaWeave', fontSize: 24, fillColor: '#1e293b', behaviors: [] }
+  { id: 'obj-1', name: 'Object_1', type: 'rect', x: 100, y: 100, width: 80, height: 80, fillColor: '#3862f6', borderRadius: 8, behaviors: [] },
+  { id: 'obj-2', name: 'Title_Text', type: 'text', x: 100, y: 50, text: 'Hello IdeaWeave', fontSize: 18, fillColor: '#1e293b', behaviors: [] }
 ];
 
-// 模拟一个发送给 AI 的函数
 const askAI = async (userInput, currentObjects) => {
-  const API_KEY = "sk-4ddc42fea38a4368b93263d55f0b59cd"; // 记得换成你申请的 key
+  const API_KEY = "sk-4ddc42fea38a4368b93263d55f0b59cd"; 
   const BASE_URL = "https://api.deepseek.com/v1/chat/completions";
 
-  // 这是给 AI 的“说明书”，告诉它必须按我们的格式回话
   const systemPrompt = `你是一个绘图助手。请根据用户指令返回 JSON。
   当前物体列表：${JSON.stringify(currentObjects.map(o => ({id: o.id, name: o.name})))}
-  
   如果是创建，返回：{"type":"CREATE", "shape":"rect", "color":"#3862f6"}
   如果是让某个物体动，返回：{"type":"ANIMATE", "id":"物体的id", "action":"旋转"}`;
 
-  const response = await fetch(BASE_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${API_KEY}`
-    },
-    body: JSON.stringify({
-      model: "deepseek-chat",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userInput }
-      ],
-      response_format: { type: "json_object" } // 强行要求返回JSON
-    })
-  });
+  try {
+    const response = await fetch(BASE_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${API_KEY}`
+      },
+      body: JSON.stringify({
+        model: "deepseek-chat",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userInput }
+        ],
+        response_format: { type: "json_object" }
+      })
+    });
 
-  const resData = await response.json();
-  return JSON.parse(resData.choices[0].message.content);
+    const resData = await response.json();
+    return JSON.parse(resData.choices[0].message.content);
+  } catch (error) {
+    console.error('AI API Error:', error);
+    return { type: 'CREATE', shape: 'rect', color: '#3862f6' };
+  }
 };
 
 export default function App() {
@@ -51,6 +56,7 @@ export default function App() {
   const [input, setInput] = useState('');
   const [mode, setMode] = useState('edit');
   const [activeTool, setActiveTool] = useState('select');
+  const [activeTab, setActiveTab] = useState('canvas');
 
   const handleAddCustomObject = () => {
     const newId = `obj-${Date.now()}`;
@@ -58,21 +64,23 @@ export default function App() {
       id: newId,
       name: `Custom_${objects.length + 1}`,
       type: 'rect',
-      x: 350, y: 250,
-      width: 100, height: 100,
+      x: 50 + Math.random() * 100, 
+      y: 50 + Math.random() * 100,
+      width: 60, height: 60,
       fillColor: '#8b5cf6',
       borderRadius: 8,
       behaviors: []
     };
     setObjects([...objects, newObj]);
-    setActiveTool('select'); // 创建完自动切回选择模式
+    setActiveTool('select');
     handleSelect(newId);
   };
 
   const selectedObj = objects.find(o => o.id === selectedId);
+
   const deleteObject = (id) => {
     setObjects(prev => prev.filter(o => o.id !== id));
-    setSelectedId(null); // 删除后取消选中
+    setSelectedId(null);
   };
 
   const handleSelect = (id) => {
@@ -87,12 +95,7 @@ export default function App() {
     setObjects(prev => prev.map(o => o.id === id ? { ...o, ...updates } : o));
   }, []);
 
-  const canvasManager = useCanvas(
-    objects,
-    setObjects,
-    mode,
-    setSelectedId,
-  );
+  const { manager: canvasManager, canvasRef } = useCanvas(objects, setObjects, mode, setSelectedId);
 
   useEffect(() => {
     if (canvasManager) {
@@ -100,115 +103,297 @@ export default function App() {
     }
   }, [activeTool, canvasManager]);
 
-
-
-
   const handleAICommand = async (cmd) => {
     if (!cmd.trim()) return;
-
-    console.log("正在思考指令:", cmd);
-
     try {
-      // 1. 调用刚才写的翻译官函数
       const result = await askAI(cmd, objects);
-      console.log("AI 返回了结果:", result);
-
-      // 2. 根据 AI 的要求更新画布数据
       if (result.type === 'CREATE') {
         const newId = `obj-${Date.now()}`;
         const newObj = {
           id: newId,
           name: `AI_Object_${objects.length + 1}`,
           type: result.shape || 'rect',
-          x: 300 + Math.random() * 100, // 随机放个位置
-          y: 200 + Math.random() * 100,
-          width: 120,
-          height: 120,
+          x: 50 + Math.random() * 100,
+          y: 50 + Math.random() * 100,
+          width: 60, height: 60,
           fillColor: result.color || '#3862f6',
           borderRadius: 8,
-          behaviors: [] // 初始没动作
+          behaviors: []
         };
-        setObjects([...objects, newObj]); // 把新物体塞进数组
+        setObjects([...objects, newObj]);
         setSelectedId(newId);
-      } 
-      else if (result.type === 'ANIMATE') {
-        // 让某个物体动起来，就是给它的 behaviors 数组加东西
+      } else if (result.type === 'ANIMATE') {
         const ts = Date.now();
         updateObject(result.id, {
           behaviors: [{ id: `bh-${ts}`, name: `点击${result.action}` }]
         });
       }
-
-      setInput(''); // 清空输入框
+      setInput('');
     } catch (error) {
-      console.error("AI 好像开小差了:", error);
-      alert("AI 响应失败，请检查网络或 API Key");
+      alert("AI 响应失败，请检查网络");
     }
   };
 
+  if (isMobile) {
+    return (
+      <View style={styles.mobileContainer}>
+        <Header mode={mode} setMode={setMode} setActiveTool={setActiveTool} />
+        
+        <View style={styles.mobileTabBar}>
+          <TouchableOpacity 
+            style={[styles.mobileTab, activeTab === 'objects' && styles.mobileTabActive]}
+            onPress={() => setActiveTab('objects')}
+          >
+            <Text style={[styles.mobileTabText, activeTab === 'objects' && styles.mobileTabTextActive]}>对象</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.mobileTab, activeTab === 'canvas' && styles.mobileTabActive]}
+            onPress={() => setActiveTab('canvas')}
+          >
+            <Text style={[styles.mobileTabText, activeTab === 'canvas' && styles.mobileTabTextActive]}>画布</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.mobileTab, activeTab === 'properties' && styles.mobileTabActive]}
+            onPress={() => setActiveTab('properties')}
+          >
+            <Text style={[styles.mobileTabText, activeTab === 'properties' && styles.mobileTabTextActive]}>属性</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.mobileContent}>
+          {activeTab === 'objects' && (
+            <ObjectList objects={objects} selectedId={selectedId} handleSelect={handleSelect} mode={mode} />
+          )}
+          
+          {activeTab === 'canvas' && (
+            <View style={styles.mobileCanvasContainer}>
+              <Toolbar activeTool={activeTool} setActiveTool={setActiveTool} onAddObject={handleAddCustomObject} mode={mode} />
+              
+              <View style={styles.mobileCanvasWrapper}>
+                <CanvasRenderer 
+                  objects={objects} 
+                  mode={mode} 
+                  canvasRef={canvasRef} 
+                  onSelect={setSelectedId} 
+                  onModify={updateObject} 
+                />
+              </View>
+
+              <View style={styles.mobileStatusBar}>
+                <View style={[styles.statusDot, { backgroundColor: mode === 'play' ? '#3b82f6' : '#94a3b8' }]} />
+                <Text style={styles.statusText}>
+                  {mode === 'play' ? '预览模式' : '编辑模式'}
+                </Text>
+              </View>
+
+              {mode === 'edit' && (
+                <TouchableOpacity 
+                  onPress={() => { setObjects(INITIAL_OBJECTS); setSelectedId(INITIAL_OBJECTS[0].id); }}
+                  style={styles.mobileClearButton}
+                >
+                  <Trash2 size={14} color="#dc2626" />
+                  <Text style={styles.clearButtonText}>清空</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+          
+          {activeTab === 'properties' && (
+            <PropertyPanel selectedObj={selectedObj} selectedId={selectedId} updateObject={updateObject} onDelete={deleteObject} mode={mode} />
+          )}
+        </View>
+        
+        <AiChatFooter input={input} setInput={setInput} handleAICommand={handleAICommand} />
+      </View>
+    );
+  }
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', backgroundColor: '#fcfcfc', color: '#1e293b', fontFamily: 'sans-serif', overflow: 'hidden' }}>
-      <Header
-        mode={mode}
-        setMode={setMode}
-        setActiveTool={setActiveTool}
-      />
+    <View style={styles.container}>
+      <Header mode={mode} setMode={setMode} setActiveTool={setActiveTool} />
 
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        <ObjectList
-          objects={objects}
-          selectedId={selectedId}
-          handleSelect={handleSelect}
-          mode={mode}
-        />
+      <View style={styles.mainContent}>
+        <ObjectList objects={objects} selectedId={selectedId} handleSelect={handleSelect} mode={mode} />
 
-        <main style={{ flex: 1, backgroundColor: '#f8f9fa', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
-          <div style={{ position: 'absolute', inset: 0, opacity: 0.03, pointerEvents: 'none', backgroundImage: 'radial-gradient(#000 1px, transparent 1px)', backgroundSize: '24px 24px' }} />
+        <View style={styles.canvasArea}>
+          {Platform.OS === 'web' && (
+            <View style={styles.webGrid} />
+          )}
 
-          <div style={{ position: 'relative', width: 800, height: 600, backgroundColor: 'white', boxShadow: '0 0 24px rgba(0,0,0,0.05)', border: mode === 'play' ? '2px solid #3b82f6' : '1px solid #f1f5f9', transition: 'border 0.3s' }}>
+          <View style={[
+            styles.canvasContainer,
+            { borderColor: mode === 'play' ? '#3b82f6' : '#f1f5f9' }
+          ]}>
+            <Toolbar activeTool={activeTool} setActiveTool={setActiveTool} onAddObject={handleAddCustomObject} mode={mode} />
 
-            {/* 工具栏组件 */}
-            <Toolbar
-              activeTool={activeTool}
-              setActiveTool={setActiveTool}
-              onAddObject={handleAddCustomObject}
-              mode={mode}
-            />
+            <View style={{ flex: 1, overflow: 'hidden' }}>
+              <CanvasRenderer objects={objects} mode={mode} canvasRef={canvasRef} onSelect={setSelectedId} onModify={updateObject} />
+            </View>
 
-
-            <div style={{ width: '100%', height: '100%' }}>
-              <canvas id="fabric-canvas" />
-
-            </div>
-
-            <div style={{ position: 'absolute', top: -24, left: 0, fontSize: '10px', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <div style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: mode === 'play' ? '#3b82f6' : '#94a3b8' }}></div>
-              {mode === 'play' ? 'INTERACTIVE PREVIEW' : 'DESIGN MODE'}
-            </div>
+            <View style={styles.statusLabel}>
+              <View style={[styles.statusDot, { backgroundColor: mode === 'play' ? '#3b82f6' : '#94a3b8' }]} />
+              <Text style={styles.statusText}>
+                {mode === 'play' ? 'INTERACTIVE PREVIEW' : 'DESIGN MODE'}
+              </Text>
+            </View>
 
             {mode === 'edit' && (
-              <button onClick={() => { setObjects(INITIAL_OBJECTS); setSelectedId(INITIAL_OBJECTS[0].id); }}
-                style={{ position: 'absolute', top: 10, left: 10, padding: '6px 12px', backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 12, color: '#dc2626', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                <Trash2 size={14} />清空画布
-              </button>
+              <TouchableOpacity 
+                onPress={() => { setObjects(INITIAL_OBJECTS); setSelectedId(INITIAL_OBJECTS[0].id); }}
+                style={styles.clearButton}
+              >
+                <Trash2 size={14} color="#dc2626" />
+                <Text style={styles.clearButtonText}>清空画布</Text>
+              </TouchableOpacity>
             )}
-          </div>
-        </main>
+          </View>
+        </View>
 
-        <PropertyPanel
-          selectedObj={selectedObj}
-          selectedId={selectedId}
-          updateObject={updateObject}
-          onDelete={deleteObject}
-          mode={mode}
-        />
-      </div>
-      <AiChatFooter
-        input={input}
-        setInput={setInput}
-        handleAICommand={handleAICommand}
-      />
-    </div>
+        <PropertyPanel selectedObj={selectedObj} selectedId={selectedId} updateObject={updateObject} onDelete={deleteObject} mode={mode} />
+      </View>
+      
+      <AiChatFooter input={input} setInput={setInput} handleAICommand={handleAICommand} />
+    </View>
   );
 }
 
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#fcfcfc',
+  },
+  mainContent: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  canvasArea: {
+    flex: 1,
+    backgroundColor: '#f8f9fa',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  webGrid: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    opacity: 0.03,
+    backgroundImage: 'radial-gradient(#000 1px, transparent 1px)',
+    backgroundSize: '24px 24px',
+  },
+  canvasContainer: {
+    position: 'relative',
+    width: Platform.OS === 'web' ? 800 : '90%',
+    height: Platform.OS === 'web' ? 600 : 450,
+    backgroundColor: 'white',
+    borderWidth: 1,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
+      android: { elevation: 4 },
+      web: { boxShadow: '0 0 24px rgba(0,0,0,0.05)' }
+    })
+  },
+  statusLabel: {
+    position: 'absolute',
+    top: -24,
+    left: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginRight: 4,
+  },
+  statusText: {
+    fontSize: 10,
+    color: '#94a3b8',
+  },
+  clearButton: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'white',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  clearButtonText: {
+    fontSize: 12,
+    color: '#dc2626',
+    marginLeft: 6,
+  },
+  
+  // Mobile styles
+  mobileContainer: {
+    flex: 1,
+    backgroundColor: '#fcfcfc',
+  },
+  mobileTabBar: {
+    flexDirection: 'row',
+    backgroundColor: 'white',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+    height: 44,
+  },
+  mobileTab: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  mobileTabActive: {
+    borderBottomColor: '#3b82f6',
+  },
+  mobileTabText: {
+    fontSize: 14,
+    color: '#64748b',
+  },
+  mobileTabTextActive: {
+    color: '#3b82f6',
+    fontWeight: '600',
+  },
+  mobileContent: {
+    flex: 1,
+  },
+  mobileCanvasContainer: {
+    flex: 1,
+    backgroundColor: '#f8f9fa',
+    padding: 10,
+  },
+  mobileCanvasWrapper: {
+    flex: 1,
+    backgroundColor: 'white',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    overflow: 'hidden',
+    marginTop: 10,
+  },
+  mobileStatusBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    marginTop: 8,
+  },
+  mobileClearButton: {
+    position: 'absolute',
+    top: 60,
+    right: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'white',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 6,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    zIndex: 10,
+  },
+});

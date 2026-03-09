@@ -1,55 +1,190 @@
-import { Send, Sparkles } from "lucide-react";
+import { Send, Sparkles } from "lucide-react-native";
+import {
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
+} from 'react-native';
 
-export const AiChatFooter = ({ input, setInput, handleAICommand }) => (
-  <footer style={{ height: 160, borderTop: '1px solid #e2e8f0', backgroundColor: 'white', display: 'flex', flexDirection: 'column' }}>
-    <div style={{ flex: 1, display: 'flex', alignItems: 'center', padding: '0 16px', gap: 24 }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {['# 旋转正方形', '# 放大圆形', '# 移动方块'].map(tag => (
-            <button key={tag} onClick={() => setInput(tag.replace('# ', ''))} style={{ padding: '4px 8px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 4, fontSize: 11, cursor: 'pointer' }}>{tag}</button>
-          ))}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, color: '#2563eb' }}>
-            <Sparkles size={18} fill="currentColor" />
-          <span>IdeaWeave Agent</span>
-        </div>
-      </div>
-      <div style={{ flex: 1, position: 'relative' }}>
-        <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), handleAICommand(input))}
-          placeholder="描述你想要的物体及其行为..."
-          style={{ width: '100%', height: 96, padding: 12, paddingRight: 48, border: '1px solid #e2e8f0', borderRadius: 12, outline: 'none', fontSize: 14 }} />
-        <button onClick={() => handleAICommand(input)} disabled={!input.trim()}
-          style={{ position: 'absolute', right: 12, bottom: 12, padding: 8, backgroundColor: '#2563eb', color: 'white', borderRadius: '50%', border: 'none', cursor: 'pointer', opacity: input.trim() ? 1 : 0.6 }}>
-          <Send size={18} />
-        </button>
-      </div>
-    </div>
-  </footer>
-);
+export const AiChatFooter = ({ input, setInput, handleAICommand }) => {
+  const isMobile = Platform.OS !== 'web';
 
-// 在 AiChatFooter.jsx 中或独立的服务文件中
-const callAiApi = async (userInput, currentObjects) => {
-  const API_KEY = "sk-4ddc42fea38a4368b93263d55f0b59cd";
-  const SYSTEM_PROMPT = `你是一个绘图助手。根据用户指令，返回一个 JSON 数组，包含要执行的操作。
-  支持操作：
-  1. {"type": "CREATE", "shape": "rect"|"circle", "color": "hex"}
-  2. {"type": "ANIMATE", "targetId": "id", "animation": "rotate"|"scale"|"move"}
-  
-  当前画布对象：${JSON.stringify(currentObjects.map(o => ({id: o.id, name: o.name})))}
-  只返回 JSON，不要任何解释。`;
+  const handleKeyDown = (e) => {
+    if (Platform.OS === 'web' && e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleAICommand(input);
+    }
+  };
 
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${API_KEY}` },
-    body: JSON.stringify({
-      model: "gpt-4-turbo-preview", // 或其他模型
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: userInput }
-      ],
-      response_format: { type: "json_object" } // 强制 JSON
-    })
-  });
-  const data = await response.json();
-  return JSON.parse(data.choices[0].message.content);
+  return (
+    <View style={[styles.footer, isMobile && styles.mobileFooter]}>
+      <View style={[styles.contentContainer, isMobile && styles.mobileContentContainer]}>
+        
+        <View style={[styles.leftSection, isMobile && styles.mobileLeftSection]}>
+          <View style={[styles.tagContainer, isMobile && styles.mobileTagContainer]}>
+            {['# 旋转正方形', '# 放大圆形', '# 移动方块'].map(tag => (
+              <TouchableOpacity 
+                key={tag} 
+                onPress={() => setInput(tag.replace('# ', ''))}
+                style={[styles.tagButton, isMobile && styles.mobileTagButton]}
+              >
+                <Text style={[styles.tagText, isMobile && styles.mobileTagText]}>{tag}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          
+          <View style={[styles.logoContainer, isMobile && styles.mobileLogoContainer]}>
+            <Sparkles size={isMobile ? 20 : 18} color="#2563eb" fill="#2563eb" />
+            <Text style={[styles.logoText, isMobile && styles.mobileLogoText]}>IdeaWeave Agent</Text>
+          </View>
+        </View>
+
+        <View style={[styles.inputSection, isMobile && styles.mobileInputSection]}>
+          <TextInput
+            value={input}
+            onChangeText={setInput}
+            onKeyPress={handleKeyDown}
+            placeholder="描述你想要的物体及其行为..."
+            multiline={true}
+            style={[styles.textArea, isMobile && styles.mobileTextArea]}
+            placeholderTextColor="#94a3b8"
+          />
+          
+          <TouchableOpacity 
+            onPress={() => handleAICommand(input)}
+            style={[styles.sendButton, isMobile && styles.mobileSendButton]}
+          >
+            <Send size={isMobile ? 20 : 18} color="white" />
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  );
 };
+
+const styles = StyleSheet.create({
+  footer: {
+    backgroundColor: 'white',
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+  },
+  mobileFooter: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  contentContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 20,
+  },
+  mobileContentContainer: {
+    flexDirection: 'column',
+    gap: 8,
+  },
+  leftSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  mobileLeftSection: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+    gap: 8,
+  },
+  tagContainer: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  mobileTagContainer: {
+    flexDirection: 'row',
+    gap: 6,
+    flex: 1,
+    flexWrap: 'wrap',
+  },
+  tagButton: {
+    backgroundColor: '#f1f5f9',
+    borderRadius: 12,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+  },
+  mobileTagButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 14,
+  },
+  tagText: {
+    fontSize: 12,
+    color: '#64748b',
+  },
+  mobileTagText: {
+    fontSize: 11,
+  },
+  logoContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  mobileLogoContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  logoText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#2563eb',
+  },
+  mobileLogoText: {
+    fontSize: 12,
+  },
+  inputSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+    maxWidth: 400,
+  },
+  mobileInputSection: {
+    flexDirection: 'row',
+    width: '100%',
+    maxWidth: '100%',
+    gap: 8,
+  },
+  textArea: {
+    flex: 1,
+    height: 40,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    fontSize: 14,
+    color: '#1e293b',
+    backgroundColor: '#f8fafc',
+    textAlignVertical: 'center',
+  },
+  mobileTextArea: {
+    height: 44,
+    fontSize: 14,
+    paddingHorizontal: 12,
+  },
+  sendButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#3b82f6',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  mobileSendButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+  },
+});
