@@ -170,6 +170,549 @@ export class CanvasManager {
 
   // 绑定单个物体的交互动画
   bindObjectBehaviors(fObj, objData) {
+    // 事件原语：onDrag (拖拽事件)
+    fObj.on('mousedown', (e) => {
+      if (this.mode !== 'play') return;
+      
+      const dragStart = { x: e.e.clientX, y: e.e.clientY };
+      const originalPos = { x: fObj.left, y: fObj.top };
+      
+      // 记录拖拽开始位置
+      fObj._dragStart = originalPos;
+      fObj._dragging = true;
+      
+      // 绑定移动事件
+      const onMouseMove = (moveEvent) => {
+        if (!fObj._dragging) return;
+        
+        const dx = (moveEvent.e.clientX - dragStart.x) / this.canvas.getZoom();
+        const dy = (moveEvent.e.clientY - dragStart.y) / this.canvas.getZoom();
+        
+        fObj.set({
+          left: originalPos.x + dx,
+          top: originalPos.y + dy
+        });
+        
+        this.canvas.renderAll();
+        
+        // 检查碰撞
+        if (this.collisionEnabled) {
+          this.checkCollisions(fObj);
+        }
+      };
+      
+      const onMouseUp = (upEvent) => {
+        if (fObj._dragging) {
+          fObj._dragging = false;
+          this.canvas.off('mouse:move', onMouseMove);
+          this.canvas.off('mouse:up', onMouseUp);
+          
+          // 拖拽结束，检查是否有 onDrag 行为
+          const dragBehavior = objData.behaviors?.find(b => b.action === 'drag');
+          if (dragBehavior) {
+            this.executeDragBehavior(dragBehavior, fObj, originalPos);
+          }
+          
+          // 同步状态到 React
+          this.onModify(objData.id, {
+            x: fObj.left,
+            y: fObj.top,
+            width: fObj.width * fObj.scaleX,
+            height: fObj.height * fObj.scaleY,
+            angle: fObj.angle || 0
+          });
+        }
+      };
+      
+      this.canvas.on('mouse:move', onMouseMove);
+      this.canvas.on('mouse:up', onMouseUp);
+    });
+    
+    // 事件原语：onHover (悬停事件)
+    fObj.on('mouseover', () => {
+      if (this.mode !== 'play') return;
+      
+      const hoverBehavior = objData.behaviors?.find(b => b.action === 'hover');
+      if (hoverBehavior) {
+        this.executeHoverBehavior(hoverBehavior, fObj);
+      }
+    });
+    
+    fObj.on('mouseout', () => {
+      if (this.mode !== 'play') return;
+      
+      // 恢复原始状态
+      const hoverOutBehavior = objData.behaviors?.find(b => b.action === 'hoverOut');
+      if (hoverOutBehavior) {
+        this.executeHoverOutBehavior(hoverOutBehavior, fObj);
+      }
+    });
+    
+    // 事件原语：onTimer (定时器事件)
+    const timerBehavior = objData.behaviors?.find(b => b.action === 'timer');
+    if (timerBehavior && this.mode === 'play') {
+      const intervalId = this.startTimerBehavior(timerBehavior, fObj);
+      fObj._timerId = intervalId;
+    }
+    
+    // 逻辑原语：执行所有行为
+    this.executeAllBehaviors(objData, fObj);
+  }
+  
+  // 执行所有行为（支持复合行为）
+  executeAllBehaviors(objData, fObj) {
+    if (!objData.behaviors || !Array.isArray(objData.behaviors)) return;
+    
+    objData.behaviors.forEach(behavior => {
+      switch (behavior.action) {
+        case 'sequence':
+          this.executeSequenceBehavior(behavior, fObj);
+          break;
+        case 'parallel':
+          this.executeParallelBehavior(behavior, fObj);
+          break;
+        case 'if':
+          this.executeIfBehavior(behavior, fObj);
+          break;
+        case 'repeat':
+          this.executeRepeatBehavior(behavior, fObj);
+          break;
+        case 'wait':
+          this.executeWaitBehavior(behavior, fObj);
+          break;
+        case 'while':
+          this.executeWhileBehavior(behavior, fObj);
+          break;
+        case 'foreach':
+          this.executeForEachBehavior(behavior, fObj);
+          break;
+        case 'call':
+          this.executeCallBehavior(behavior, fObj);
+          break;
+      }
+    });
+  }
+  
+  // 逻辑原语：if (条件判断)
+  executeIfBehavior(behavior, fObj) {
+    const condition = behavior.params?.condition;
+    const thenActions = behavior.params?.then;
+    const elseActions = behavior.params?.else;
+    
+    if (!condition || !thenActions) return;
+    
+    // 解析条件
+    let conditionResult = false;
+    if (typeof condition === 'string') {
+      // 简单条件解析
+      if (condition === 'isColliding') {
+        conditionResult = this.isObjectColliding(fObj);
+      } else if (condition === 'isSelected') {
+        conditionResult = fObj === this.canvas.getActiveObject();
+      } else if (condition.startsWith('equals')) {
+        const match = condition.match(/equals\(([^,]+),([^)]+)\)/);
+        if (match) {
+          const prop = match[1].trim();
+          const value = match[2].trim();
+          conditionResult = fObj.get(prop) === value;
+        }
+      }
+    } else if (typeof condition === 'boolean') {
+      conditionResult = condition;
+    }
+    
+    // 执行 then 分支
+    if (conditionResult && Array.isArray(thenActions)) {
+      thenActions.forEach(action => {
+        this.executeAction(action, fObj);
+      });
+    } 
+    // 执行 else 分支
+    else if (elseActions && Array.isArray(elseActions)) {
+      elseActions.forEach(action => {
+        this.executeAction(action, fObj);
+      });
+    }
+  }
+  
+  // 逻辑原语：repeat (重复执行)
+  executeRepeatBehavior(behavior, fObj) {
+    const count = behavior.params?.count || 1;
+    const actions = behavior.params?.actions;
+    
+    if (!actions || !Array.isArray(actions)) return;
+    
+    let executed = 0;
+    
+    const executeNext = () => {
+      if (executed >= count) return;
+      
+      actions.forEach(action => {
+        this.executeAction(action, fObj);
+      });
+      
+      executed++;
+      
+      if (executed < count && behavior.params?.delay) {
+        setTimeout(executeNext, behavior.params.delay);
+      } else if (executed < count) {
+        executeNext();
+      }
+    };
+    
+    executeNext();
+  }
+  
+  // 逻辑原语：wait (等待延迟)
+  executeWaitBehavior(behavior, fObj) {
+    const duration = behavior.params?.duration || 1000;
+    
+    return new Promise(resolve => {
+      setTimeout(() => {
+        resolve();
+      }, duration);
+    });
+  }
+  
+  // 逻辑原语：while (循环执行)
+  executeWhileBehavior(behavior, fObj) {
+    const condition = behavior.params?.condition;
+    const actions = behavior.params?.actions;
+    
+    if (!condition || !actions) return;
+    
+    const checkCondition = () => {
+      let conditionResult = false;
+      
+      if (typeof condition === 'string') {
+        if (condition === 'isColliding') {
+          conditionResult = this.isObjectColliding(fObj);
+        } else if (condition === 'isSelected') {
+          conditionResult = fObj === this.canvas.getActiveObject();
+        }
+      }
+      
+      if (conditionResult) {
+        actions.forEach(action => {
+          this.executeAction(action, fObj);
+        });
+        setTimeout(checkCondition, behavior.params?.interval || 100);
+      }
+    };
+    
+    checkCondition();
+  }
+  
+  // 逻辑原语：foreach (遍历执行)
+  executeForEachBehavior(behavior, fObj) {
+    const items = behavior.params?.items || [];
+    const action = behavior.params?.action;
+    
+    if (!action || !Array.isArray(items)) return;
+    
+    items.forEach(item => {
+      this.executeAction(action, fObj, item);
+    });
+  }
+  
+  // 逻辑原语：call (调用其他行为)
+  executeCallBehavior(behavior, fObj) {
+    const targetId = behavior.params?.targetId;
+    const actionName = behavior.params?.actionName;
+    
+    if (!targetId || !actionName) return;
+    
+    const targetObj = this.canvas.getObjects().find(o => o.id === targetId);
+    if (targetObj) {
+      const targetData = this.objectsData.find(o => o.id === targetId);
+      if (targetData) {
+        const targetBehavior = targetData.behaviors?.find(b => b.name === actionName || b.action === actionName);
+        if (targetBehavior) {
+          this.executeBehavior(targetBehavior, targetObj);
+        }
+      }
+    }
+  }
+  
+  // 逻辑原语：sequence (顺序执行)
+  executeSequenceBehavior(behavior, fObj) {
+    const actions = behavior.params?.actions || [];
+    
+    if (!Array.isArray(actions)) return;
+    
+    const executeNext = async (index = 0) => {
+      if (index >= actions.length) return;
+      
+      await this.executeAction(actions[index], fObj);
+      await executeNext(index + 1);
+    };
+    
+    executeNext();
+  }
+  
+  // 逻辑原语：parallel (并行执行)
+  executeParallelBehavior(behavior, fObj) {
+    const actions = behavior.params?.actions || [];
+    
+    if (!Array.isArray(actions)) return;
+    
+    actions.forEach(action => {
+      this.executeAction(action, fObj);
+    });
+  }
+  
+  // 执行单个动作
+  executeAction(action, fObj, context = null) {
+    if (!action) return;
+    
+    const actionName = action.action || action.type;
+    
+    switch (actionName) {
+      case 'rotate':
+        this.executeRotateAction(action, fObj);
+        break;
+      case 'scale':
+        this.executeScaleAction(action, fObj);
+        break;
+      case 'move':
+        this.executeMoveAction(action, fObj);
+        break;
+      case 'fade':
+        this.executeFadeAction(action, fObj);
+        break;
+      case 'modify':
+        this.executeModifyAction(action, fObj, context);
+        break;
+      case 'wait':
+        return this.executeWaitAction(action, fObj);
+      case 'call':
+        return this.executeCallAction(action, fObj);
+      default:
+        console.warn('未知动作:', actionName);
+    }
+  }
+  
+  // 执行旋转动作
+  executeRotateAction(action, fObj) {
+    const rotation = action.params?.rotation || 360;
+    const duration = action.duration || 1000;
+    
+    fObj.animate('angle', fObj.angle + rotation, {
+      duration: duration,
+      onChange: () => this.canvas.renderAll()
+    });
+  }
+  
+  // 执行缩放动作
+  executeScaleAction(action, fObj) {
+    const scale = action.params?.scale || 1.5;
+    const duration = action.duration || 600;
+    
+    fObj.animate({ scaleX: scale, scaleY: scale }, {
+      duration: duration,
+      onChange: () => this.canvas.renderAll()
+    });
+  }
+  
+  // 执行移动动作
+  executeMoveAction(action, fObj) {
+    const duration = action.duration || 1000;
+    
+    if (action.params?.moveTo) {
+      fObj.animate('left', action.params.moveTo.x, {
+        duration: duration,
+        onChange: () => this.canvas.renderAll()
+      });
+      fObj.animate('top', action.params.moveTo.y, {
+        duration: duration,
+        onChange: () => this.canvas.renderAll()
+      });
+    } else if (action.params?.moveBy) {
+      const dx = action.params.moveBy.x || 0;
+      const dy = action.params.moveBy.y || 0;
+      
+      fObj.animate('left', fObj.left + dx, {
+        duration: duration,
+        onChange: () => this.canvas.renderAll()
+      });
+      fObj.animate('top', fObj.top + dy, {
+        duration: duration,
+        onChange: () => this.canvas.renderAll()
+      });
+    }
+  }
+  
+  // 执行淡入淡出动作
+  executeFadeAction(action, fObj) {
+    const opacity = action.params?.opacity || 0.5;
+    const duration = action.duration || 600;
+    
+    fObj.animate('opacity', opacity, {
+      duration: duration,
+      onChange: () => this.canvas.renderAll()
+    });
+  }
+  
+  // 执行修改动作
+  executeModifyAction(action, fObj, context = null) {
+    const properties = {};
+    
+    if (action.params?.color) {
+      properties.fill = action.params.color;
+    }
+    if (action.params?.position) {
+      properties.left = action.params.position.x;
+      properties.top = action.params.position.y;
+    }
+    if (action.params?.size) {
+      properties.width = action.params.size.width;
+      properties.height = action.params.size.height;
+    }
+    if (action.params?.text) {
+      properties.text = action.params.text;
+    }
+    if (action.params?.fontSize) {
+      properties.fontSize = action.params.fontSize;
+    }
+    
+    fObj.set(properties);
+    this.canvas.renderAll();
+  }
+  
+  // 执行等待动作
+  executeWaitAction(action, fObj) {
+    const duration = action.params?.duration || 1000;
+    
+    return new Promise(resolve => {
+      setTimeout(resolve, duration);
+    });
+  }
+  
+  // 执行调用动作
+  executeCallAction(action, fObj) {
+    const targetId = action.params?.targetId;
+    const actionName = action.params?.actionName;
+    
+    if (!targetId || !actionName) return;
+    
+    const targetObj = this.canvas.getObjects().find(o => o.id === targetId);
+    if (targetObj) {
+      const targetData = this.objectsData.find(o => o.id === targetId);
+      if (targetData) {
+        const targetBehavior = targetData.behaviors?.find(b => b.name === actionName || b.action === actionName);
+        if (targetBehavior) {
+          this.executeBehavior(targetBehavior, targetObj);
+        }
+      }
+    }
+  }
+  
+  // 执行行为
+  executeBehavior(behavior, fObj) {
+    const actionName = behavior.action || behavior.type;
+    
+    switch (actionName) {
+      case 'rotate':
+        this.executeRotateAction(behavior, fObj);
+        break;
+      case 'scale':
+        this.executeScaleAction(behavior, fObj);
+        break;
+      case 'move':
+        this.executeMoveAction(behavior, fObj);
+        break;
+      case 'fade':
+        this.executeFadeAction(behavior, fObj);
+        break;
+      case 'modify':
+        this.executeModifyAction(behavior, fObj);
+        break;
+      case 'wait':
+        return this.executeWaitAction(behavior, fObj);
+      default:
+        console.warn('未知行为:', actionName);
+    }
+  }
+  
+  // 检查物体是否正在碰撞
+  isObjectColliding(fObj) {
+    if (!fObj || !fObj.id) return false;
+    
+    const otherObjects = this.canvas.getObjects().filter(obj => obj.id !== fObj.id);
+    
+    return otherObjects.some(otherObj => {
+      if (otherObj.id) {
+        fObj.setCoords();
+        otherObj.setCoords();
+        return fObj.intersectsWithObject(otherObj);
+      }
+      return false;
+    });
+  }
+  
+  // 执行拖拽行为
+  executeDragBehavior(behavior, fObj, originalPos) {
+    if (behavior.params?.onDrag) {
+      const targetId = behavior.params.onDrag.targetId;
+      const targetAction = behavior.params.onDrag.action;
+      
+      const targetObj = this.canvas.getObjects().find(o => o.id === targetId);
+      if (targetObj && targetAction) {
+        this.executeAction(targetAction, targetObj);
+      }
+    }
+  }
+  
+  // 执行悬停行为
+  executeHoverBehavior(behavior, fObj) {
+    if (behavior.params?.onHover) {
+      const targetId = behavior.params.onHover.targetId;
+      const targetAction = behavior.params.onHover.action;
+      
+      const targetObj = this.canvas.getObjects().find(o => o.id === targetId);
+      if (targetObj && targetAction) {
+        this.executeAction(targetAction, targetObj);
+      }
+    }
+  }
+  
+  // 执行悬停退出行为
+  executeHoverOutBehavior(behavior, fObj) {
+    if (behavior.params?.onHoverOut) {
+      const targetId = behavior.params.onHoverOut.targetId;
+      const targetAction = behavior.params.onHoverOut.action;
+      
+      const targetObj = this.canvas.getObjects().find(o => o.id === targetId);
+      if (targetObj && targetAction) {
+        this.executeAction(targetAction, targetObj);
+      }
+    }
+  }
+  
+  // 启动定时器行为
+  startTimerBehavior(behavior, fObj) {
+    const interval = behavior.params?.interval || 1000;
+    const actions = behavior.params?.actions;
+    
+    if (!actions || !Array.isArray(actions)) return null;
+    
+    return setInterval(() => {
+      actions.forEach(action => {
+        this.executeAction(action, fObj);
+      });
+    }, interval);
+  }
+  
+  // 停止定时器行为
+  stopTimerBehavior(fObj) {
+    if (fObj._timerId) {
+      clearInterval(fObj._timerId);
+      fObj._timerId = null;
+    }
+  }
+  
+  // 绑定单个物体的交互动画（保留旧版本作为兼容）
+  bindObjectBehaviorsLegacy(fObj, objData) {
     fObj.on('mousedown', () => {
       if (this.mode !== 'play') return;
 

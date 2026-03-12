@@ -428,7 +428,235 @@ ${JSON.stringify(selectedObj ? {id: selectedObj.id, name: selectedObj.name, type
 
 示例10：多目标动画
 用户输入："让它们旋转"
-返回：{"type":"ANIMATE","ids":["Red_Square","Blue_Circle"],"action":"rotate","duration":1.0,"params":{"rotation":360}}`;
+返回：{"type":"ANIMATE","ids":["Red_Square","Blue_Circle"],"action":"rotate","duration":1.0,"params":{"rotation":360}}
+
+=== 四大原语体系 ===
+
+【事件原语】
+
+1. onDrag (拖拽事件)
+当用户拖拽物体时触发的行为：
+{
+  "action": "drag",
+  "params": {
+    "onDrag": {
+      "targetId": "目标物体ID",
+      "action": {
+        "action": "modify|rotate|scale|fade",
+        "params": {...},
+        "duration": 1000
+      }
+    }
+  }
+}
+
+2. onHover (悬停事件)
+当鼠标悬停在物体上时触发的行为：
+{
+  "action": "hover",
+  "params": {
+    "onHover": {
+      "targetId": "目标物体ID",
+      "action": {
+        "action": "modify|rotate|scale|fade",
+        "params": {...},
+        "duration": 1000
+      }
+    }
+  }
+}
+
+3. onHoverOut (悬停退出事件)
+当鼠标离开物体时触发的行为：
+{
+  "action": "hoverOut",
+  "params": {
+    "onHoverOut": {
+      "targetId": "目标物体ID",
+      "action": {
+        "action": "modify|rotate|scale|fade",
+        "params": {...},
+        "duration": 1000
+      }
+    }
+  }
+}
+
+4. onTimer (定时器事件)
+定期执行的行为：
+{
+  "action": "timer",
+  "params": {
+    "interval": 1000,
+    "actions": [
+      {
+        "action": "modify|rotate|scale|fade",
+        "params": {...},
+        "duration": 1000
+      }
+    ]
+  }
+}
+
+【逻辑原语】
+
+1. if (条件判断)
+根据条件执行不同的行为：
+{
+  "action": "if",
+  "params": {
+    "condition": "isColliding|isSelected|equals(prop,value)",
+    "then": [
+      {
+        "action": "modify|rotate|scale|fade",
+        "params": {...}
+      }
+    ],
+    "else": [
+      {
+        "action": "modify|rotate|scale|fade",
+        "params": {...}
+      }
+    ]
+  }
+}
+
+2. repeat (重复执行)
+重复执行一组行为：
+{
+  "action": "repeat",
+  "params": {
+    "count": 3,
+    "delay": 100,
+    "actions": [
+      {
+        "action": "modify|rotate|scale|fade",
+        "params": {...},
+        "duration": 1000
+      }
+    ]
+  }
+}
+
+3. wait (等待延迟)
+等待指定时间：
+{
+  "action": "wait",
+  "params": {
+    "duration": 1000
+  }
+}
+
+4. while (循环执行)
+在条件满足时循环执行：
+{
+  "action": "while",
+  "params": {
+    "condition": "isColliding|isSelected",
+    "interval": 100,
+    "actions": [
+      {
+        "action": "modify|rotate|scale|fade",
+        "params": {...}
+      }
+    ]
+  }
+}
+
+5. foreach (遍历执行)
+遍历列表并执行行为：
+{
+  "action": "foreach",
+  "params": {
+    "items": ["obj-1", "obj-2", "obj-3"],
+    "action": {
+      "action": "modify|rotate|scale|fade",
+      "params": {...}
+    }
+  }
+}
+
+6. call (调用行为)
+调用其他物体的行为：
+{
+  "action": "call",
+  "params": {
+    "targetId": "目标物体ID",
+    "actionName": "行为名称"
+  }
+}
+
+7. sequence (顺序执行)
+按顺序执行一组行为：
+{
+  "action": "sequence",
+  "params": {
+    "actions": [
+      {
+        "action": "modify|rotate|scale|fade",
+        "params": {...},
+        "duration": 1000
+      }
+    ]
+  }
+}
+
+8. parallel (并行执行)
+并行执行一组行为：
+{
+  "action": "parallel",
+  "params": {
+    "actions": [
+      {
+        "action": "modify|rotate|scale|fade",
+        "params": {...},
+        "duration": 1000
+      }
+    ]
+  }
+}
+
+【复合行为示例】
+
+示例11：闪烁效果（使用repeat和wait）
+用户输入："让obj-1闪烁3次"
+返回：{"type":"CREATE","shape":"rect","color":"#ff0000","position":{"x":400,"y":300},"size":{"width":100,"height":100},"name":"Blinking_Square","behaviors":[{"id":"bh-001","name":"闪烁","action":"repeat","params":{"count":3,"delay":200,"actions":[{"action":"fade","params":{"opacity":0},"duration":100},{"action":"wait","params":{"duration":100}},{"action":"fade","params":{"opacity":1},"duration":100}]}]}]}
+
+示例12：碰撞后闪烁（使用if和repeat）
+用户输入："创建一个圆形，当它碰到obj-1时，让obj-1闪烁3次"
+返回：{"type":"CREATE","shape":"circle","color":"#0000ff","position":{"x":200,"y":200},"size":{"width":80,"height":80},"name":"Blue_Circle","behaviors":[{"id":"bh-002","name":"碰撞闪烁","action":"collision","params":{"color":"#ff0000"},"targetId":"obj-1","createdAt":"2024-01-01T00:00:00Z","createdBy":"ai"}]}
+
+示例13：定时器动画（使用timer）
+用户输入："创建一个每秒旋转30度的箭头"
+返回：{"type":"CREATE","shape":"triangle","color":"#ff0000","position":{"x":400,"y":300},"size":{"width":50,"height":50},"name":"Rotating_Arrow","behaviors":[{"id":"bh-003","name":"定时旋转","action":"timer","params":{"interval":1000,"actions":[{"action":"rotate","params":{"rotation":30},"duration":1000}]}}]}
+
+示例14：悬停效果（使用hover）
+用户输入："创建一个矩形，鼠标悬停时变大，离开时恢复"
+返回：{"type":"CREATE","shape":"rect","color":"#00ff00","position":{"x":400,"y":300},"size":{"width":100,"height":100},"name":"Hover_Rect","behaviors":[{"id":"bh-004","name":"悬停变大","action":"hover","params":{"onHover":{"targetId":"Hover_Rect","action":{"action":"scale","params":{"scale":1.5},"duration":300}}},"createdAt":"2024-01-01T00:00:00Z","createdBy":"ai"},{"id":"bh-005","name":"悬停恢复","action":"hoverOut","params":{"onHoverOut":{"targetId":"Hover_Rect","action":{"action":"scale","params":{"scale":1.0},"duration":300}}},"createdAt":"2024-01-01T00:00:00Z","createdBy":"ai"}]}
+
+示例15：顺序动画（使用sequence）
+用户输入："创建一个先变红再变蓝的正方形"
+返回：{"type":"CREATE","shape":"rect","color":"#3862f6","position":{"x":400,"y":300},"size":{"width":100,"height":100},"name":"Color_Change","behaviors":[{"id":"bh-006","name":"颜色变化","action":"sequence","params":{"actions":[{"action":"modify","params":{"color":"#ff0000"},"duration":500},{"action":"wait","params":{"duration":500}},{"action":"modify","params":{"color":"#0000ff"},"duration":500}]}}]}
+
+示例16：并行动画（使用parallel）
+用户输入："创建一个同时旋转和缩放的圆形"
+返回：{"type":"CREATE","shape":"circle","color":"#0000ff","position":{"x":400,"y":300},"size":{"width":80,"height":80},"name":"Parallel_Anim","behaviors":[{"id":"bh-007","name":"并行动画","action":"parallel","params":{"actions":[{"action":"rotate","params":{"rotation":360},"duration":2000},{"action":"scale","params":{"scale":1.5},"duration":2000}]}}]}
+
+示例17：条件判断（使用if）
+用户输入："创建一个矩形，如果碰撞则变红，否则保持蓝色"
+返回：{"type":"CREATE","shape":"rect","color":"#0000ff","position":{"x":400,"y":300},"size":{"width":100,"height":100},"name":"Conditional_Rect","behaviors":[{"id":"bh-008","name":"条件变色","action":"if","params":{"condition":"isColliding","then":[{"action":"modify","params":{"color":"#ff0000"},"duration":500}],"else":[{"action":"modify","params":{"color":"#0000ff"},"duration":500}]}}]}
+
+示例18：循环检测（使用while）
+用户输入："创建一个圆形，当它被选中时持续旋转"
+返回：{"type":"CREATE","shape":"circle","color":"#ff0000","position":{"x":400,"y":300},"size":{"width":80,"height":80},"name":"While_Rotate","behaviors":[{"id":"bh-009","name":"选中旋转","action":"while","params":{"condition":"isSelected","interval":50,"actions":[{"action":"rotate","params":{"rotation":10},"duration":50}]}}]}
+
+示例19：拖拽触发（使用drag）
+用户输入："创建一个矩形，拖拽时让obj-1变绿"
+返回：{"type":"CREATE","shape":"rect","color":"#3862f6","position":{"x":400,"y":300},"size":{"width":100,"height":100},"name":"Drag_Trigger","behaviors":[{"id":"bh-010","name":"拖拽触发","action":"drag","params":{"onDrag":{"targetId":"obj-1","action":{"action":"modify","params":{"color":"#00ff00"},"duration":500}}}}]}
+
+示例20：遍历操作（使用foreach）
+用户输入："让所有的方块同时变大"
+返回：{"type":"ANIMATE","ids":["Red_Square","Yellow_Square"],"action":"foreach","params":{"items":["Red_Square","Yellow_Square"],"action":{"action":"scale","params":{"scale":1.5},"duration":500}}}`;
 
   // 构建消息数组，包含系统提示、历史对话和当前输入
   const messages = [
