@@ -8,13 +8,17 @@ export class CanvasManager {
     });
 
     this.mode = 'edit';
+    this.currentTool = 'select';
     this.objectsData = [];
 
     this.onSelect = options.onSelect || (() => { });
     this.onModify = options.onModify || (() => { });
     this.onAdd = options.onAdd || (() => { });
-    console.log(this.onAdd);
+    this.onDelete = options.onDelete || (() => { });
     
+    // 碰撞检测相关
+    this.collisionEnabled = true;
+    this.collisionHandlers = new Map();
 
     this.bindCanvasEvents();
   }
@@ -27,6 +31,9 @@ export class CanvasManager {
       this.mode = mode;
       this.updateAllObjectsInteractiveState();
     }
+    
+    // 每次状态更新都重新渲染画布
+    this.renderAll();
   }
 
   // 重新渲染整个画布
@@ -191,37 +198,132 @@ export class CanvasManager {
         }
       };
 
-
-
-      /**
-       * 
-       * 待修改，此处为AI指令解析部分
-       * 
-       */
-
-
-
-      if (b.name.includes('旋转')) {
-        fObj.animate('angle', fObj.angle + 360, {
-          duration: 1000,
-          onChange: () => this.canvas.renderAll(),
-          onComplete: syncStateToReact // ✨ 动画结束，同步状态
-        });
-      } else if (b.name.includes('变大')) {
-        fObj.animate({ scaleX: 1.5, scaleY: 1.5 }, {
-          duration: 600,
-          onChange: () => this.canvas.renderAll(),
-          onComplete: syncStateToReact // ✨ 动画结束，同步状态
-        });
-      } else if (b.name.includes('移动')) {
-        fObj.animate('left', 100 + Math.random() * 500, {
-          duration: 800,
-          onChange: () => this.canvas.renderAll()
-        });
-        fObj.animate('top', 100 + Math.random() * 300, {
-          duration: 800,
-          onComplete: syncStateToReact // ✨ 动画结束，同步状态
-        });
+      // 根据新的结构化behaviors执行动画
+      const duration = (b.duration || 1) * 1000; // 转换为毫秒
+      
+      switch (b.action) {
+        case 'rotate':
+          const rotation = b.params?.rotation || 360;
+          fObj.animate('angle', fObj.angle + rotation, {
+            duration: duration,
+            onChange: () => this.canvas.renderAll(),
+            onComplete: syncStateToReact
+          });
+          break;
+          
+        case 'scale':
+          const scale = b.params?.scale || 1.5;
+          fObj.animate({ scaleX: scale, scaleY: scale }, {
+            duration: duration,
+            onChange: () => this.canvas.renderAll(),
+            onComplete: syncStateToReact
+          });
+          break;
+          
+        case 'move':
+          if (b.params?.moveTo) {
+            fObj.animate('left', b.params.moveTo.x, {
+              duration: duration,
+              onChange: () => this.canvas.renderAll()
+            });
+            fObj.animate('top', b.params.moveTo.y, {
+              duration: duration,
+              onComplete: syncStateToReact
+            });
+          } else {
+            // 随机移动作为默认值
+            fObj.animate('left', 100 + Math.random() * 500, {
+              duration: duration,
+              onChange: () => this.canvas.renderAll()
+            });
+            fObj.animate('top', 100 + Math.random() * 300, {
+              duration: duration,
+              onComplete: syncStateToReact
+            });
+          }
+          break;
+          
+        case 'fade':
+          const opacity = b.params?.opacity || 0.5;
+          fObj.animate('opacity', opacity, {
+            duration: duration,
+            onChange: () => this.canvas.renderAll(),
+            onComplete: syncStateToReact
+          });
+          break;
+          
+        case 'modify':
+          // 处理修改其他物体的行为
+          if (b.targetId) {
+            const targetObj = this.objectsData.find(o => o.id === b.targetId);
+            if (targetObj) {
+              // 找到目标物体的Fabric.js对象
+              const fTargetObj = this.canvas.getObjects().find(f => f.id === b.targetId);
+              if (fTargetObj) {
+                // 应用修改
+                const properties = {};
+                if (b.params?.color) {
+                  properties.fill = b.params.color;
+                }
+                if (b.params?.position) {
+                  properties.left = b.params.position.x;
+                  properties.top = b.params.position.y;
+                }
+                if (b.params?.size) {
+                  properties.width = b.params.size.width;
+                  properties.height = b.params.size.height;
+                }
+                if (b.params?.text) {
+                  properties.text = b.params.text;
+                }
+                if (b.params?.fontSize) {
+                  properties.fontSize = b.params.fontSize;
+                }
+                
+                // 应用修改并同步状态
+                fTargetObj.set(properties);
+                this.canvas.renderAll();
+                
+                // 同步到React状态
+                if (this.onModify) {
+                  this.onModify(b.targetId, {
+                    ...targetObj,
+                    ...properties,
+                    x: fTargetObj.left,
+                    y: fTargetObj.top,
+                    width: fTargetObj.width,
+                    height: fTargetObj.height
+                  });
+                }
+              }
+            }
+          }
+          break;
+          
+        default:
+          // 兼容旧的行为格式
+          if (b.name?.includes('旋转')) {
+            fObj.animate('angle', fObj.angle + 360, {
+              duration: 1000,
+              onChange: () => this.canvas.renderAll(),
+              onComplete: syncStateToReact
+            });
+          } else if (b.name?.includes('变大')) {
+            fObj.animate({ scaleX: 1.5, scaleY: 1.5 }, {
+              duration: 600,
+              onChange: () => this.canvas.renderAll(),
+              onComplete: syncStateToReact
+            });
+          } else if (b.name?.includes('移动')) {
+            fObj.animate('left', 100 + Math.random() * 500, {
+              duration: 800,
+              onChange: () => this.canvas.renderAll()
+            });
+            fObj.animate('top', 100 + Math.random() * 300, {
+              duration: 800,
+              onComplete: syncStateToReact
+            });
+          }
       }
     });
   }
@@ -257,13 +359,14 @@ export class CanvasManager {
 
       case 'erase':
         this.canvas.defaultCursor = 'crosshair';
-        this.updateAllObjectsInteractiveState(true); // 允许点击物体来删除
+        this.canvas.selection = false;
+        this.updateAllObjectsInteractiveState(true, true); // 允许点击物体来删除
         break;
     }
   }
 
   // 修改原来的 updateAllObjectsInteractiveState 方法，加一个参数
-  updateAllObjectsInteractiveState(allowSelect = true) {
+  updateAllObjectsInteractiveState(allowSelect = true, isEraseMode = false) {
     const isEditable = this.mode === 'edit';
     const selectable = isEditable && allowSelect; // 必须是编辑模式且当前工具允许选中
 
@@ -271,7 +374,7 @@ export class CanvasManager {
       obj.set({
         selectable: selectable,
         evented: true,
-        hoverCursor: selectable ? 'move' : 'default'
+        hoverCursor: isEraseMode ? 'crosshair' : (selectable ? 'move' : 'default')
       });
       if (!selectable) this.canvas.discardActiveObject();
     });
@@ -294,9 +397,37 @@ export class CanvasManager {
 
   // 绑定画布事件
   bindCanvasEvents() {
-    this.canvas.on('selection:created', (e) => e.selected[0] && this.onSelect(e.selected[0].id));
-    this.canvas.on('selection:updated', (e) => e.selected[0] && this.onSelect(e.selected[0].id));
-    this.canvas.on('selection:cleared', () => this.onSelect(null));
+    this.canvas.on('selection:created', (e) => {
+      if (this.currentTool === 'erase') {
+        const target = e.selected[0];
+        if (target && target.id) {
+          this.canvas.remove(target);
+          this.canvas.discardActiveObject();
+          this.onDelete(target.id);
+        }
+      } else {
+        e.selected[0] && this.onSelect(e.selected[0].id);
+      }
+    });
+    
+    this.canvas.on('selection:updated', (e) => {
+      if (this.currentTool === 'erase') {
+        const target = e.selected[0];
+        if (target && target.id) {
+          this.canvas.remove(target);
+          this.canvas.discardActiveObject();
+          this.onDelete(target.id);
+        }
+      } else {
+        e.selected[0] && this.onSelect(e.selected[0].id);
+      }
+    });
+    
+    this.canvas.on('selection:cleared', () => {
+      if (this.currentTool !== 'erase') {
+        this.onSelect(null);
+      }
+    });
 
     this.canvas.on('object:modified', (e) => {
       const target = e.target;
@@ -334,6 +465,20 @@ export class CanvasManager {
         this.onAdd(pathData);
       }
     });
+    
+    // 移动事件 - 用于碰撞检测
+    this.canvas.on('object:moving', (e) => {
+      if (this.mode === 'play' && this.collisionEnabled) {
+        this.checkCollisions(e.target);
+      }
+    });
+
+    // 缩放事件 - 用于碰撞检测
+    this.canvas.on('object:scaling', (e) => {
+      if (this.mode === 'play' && this.collisionEnabled) {
+        this.checkCollisions(e.target);
+      }
+    });
   }
 
   // 选中某个物体
@@ -348,5 +493,103 @@ export class CanvasManager {
 
   destroy() {
     this.canvas.dispose();
+  }
+
+  // 检查碰撞
+  checkCollisions(movingObj) {
+    if (!movingObj || !movingObj.id) return;
+    
+    const otherObjects = this.canvas.getObjects().filter(obj => obj.id !== movingObj.id);
+    
+    otherObjects.forEach(otherObj => {
+      if (otherObj.id && this.isColliding(movingObj, otherObj)) {
+        this.handleCollision(movingObj, otherObj);
+      }
+    });
+  }
+
+  // 检测两个物体是否碰撞
+  isColliding(obj1, obj2) {
+    obj1.setCoords();
+    obj2.setCoords();
+    return obj1.intersectsWithObject(obj2);
+  }
+
+  // 处理碰撞事件
+  handleCollision(obj1, obj2) {
+    const collisionKey = `${obj1.id}-${obj2.id}`;
+    
+    // 检查是否已经处理过这个碰撞对，避免重复触发
+    if (!this.collisionHandlers.has(collisionKey)) {
+      // 标记为已处理
+      this.collisionHandlers.set(collisionKey, true);
+      
+      // 300毫秒后清除标记，允许再次触发
+      setTimeout(() => {
+        this.collisionHandlers.delete(collisionKey);
+      }, 300);
+      
+      // 查找obj1的行为配置
+      const obj1Data = this.objectsData.find(o => o.id === obj1.id);
+      if (obj1Data && obj1Data.behaviors) {
+        obj1Data.behaviors.forEach(behavior => {
+          if (behavior.action === 'collision' && behavior.targetId === obj2.id) {
+            // 执行碰撞行为
+            this.executeCollisionBehavior(behavior, obj1, obj2);
+          }
+        });
+      }
+      
+      // 查找obj2的行为配置
+      const obj2Data = this.objectsData.find(o => o.id === obj2.id);
+      if (obj2Data && obj2Data.behaviors) {
+        obj2Data.behaviors.forEach(behavior => {
+          if (behavior.action === 'collision' && behavior.targetId === obj1.id) {
+            // 执行碰撞行为
+            this.executeCollisionBehavior(behavior, obj2, obj1);
+          }
+        });
+      }
+    }
+  }
+
+  // 执行碰撞行为
+  executeCollisionBehavior(behavior, sourceObj, targetObj) {
+    if (behavior.params) {
+      // 应用修改到目标物体
+      const properties = {};
+      if (behavior.params.color) {
+        targetObj.set('fill', behavior.params.color);
+        properties.fill = behavior.params.color;
+      }
+      if (behavior.params.opacity) {
+        targetObj.set('opacity', behavior.params.opacity);
+        properties.opacity = behavior.params.opacity;
+      }
+      if (behavior.params.scale) {
+        targetObj.set('scaleX', behavior.params.scale);
+        targetObj.set('scaleY', behavior.params.scale);
+        properties.scaleX = behavior.params.scale;
+        properties.scaleY = behavior.params.scale;
+      }
+      
+      // 渲染画布
+      this.canvas.renderAll();
+      
+      // 同步到React状态
+      if (this.onModify && targetObj.id) {
+        const targetData = this.objectsData.find(o => o.id === targetObj.id);
+        if (targetData) {
+          this.onModify(targetObj.id, {
+            ...targetData,
+            ...properties,
+            x: targetObj.left,
+            y: targetObj.top,
+            width: targetObj.width * targetObj.scaleX,
+            height: targetObj.height * targetObj.scaleY
+          });
+        }
+      }
+    }
   }
 }
