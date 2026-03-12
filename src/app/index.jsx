@@ -7,6 +7,7 @@ import { ObjectList } from '../components/ObjectList';
 import { PropertyPanel } from '../components/PropertyPanel';
 import { Toolbar } from '../components/Toolbar';
 import { CanvasRenderer, useCanvas } from '../hooks/useCanvas';
+import { logTrainingData } from '../utils/trainingDataLogger';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const isMobile = Platform.OS !== 'web';
@@ -71,6 +72,76 @@ const validateColor = (color) => {
   return '#3862f6';
 };
 
+// 相对位置计算函数
+const calculateRelativePosition = (relativePosition, targetObj, newObjSize) => {
+  if (!targetObj || !relativePosition) return null;
+  
+  const { direction, offset = 10 } = relativePosition;
+  const targetCenterX = targetObj.x + targetObj.width / 2;
+  const targetCenterY = targetObj.y + targetObj.height / 2;
+  const targetRight = targetObj.x + targetObj.width;
+  const targetBottom = targetObj.y + targetObj.height;
+  
+  let x, y;
+  
+  switch (direction) {
+    case 'left':
+      x = targetObj.x - newObjSize.width - offset;
+      y = targetCenterY - newObjSize.height / 2;
+      break;
+    case 'right':
+      x = targetRight + offset;
+      y = targetCenterY - newObjSize.height / 2;
+      break;
+    case 'top':
+      x = targetCenterX - newObjSize.width / 2;
+      y = targetObj.y - newObjSize.height - offset;
+      break;
+    case 'bottom':
+      x = targetCenterX - newObjSize.width / 2;
+      y = targetBottom + offset;
+      break;
+    case 'top-left':
+      x = targetObj.x - newObjSize.width - offset;
+      y = targetObj.y - newObjSize.height - offset;
+      break;
+    case 'top-right':
+      x = targetRight + offset;
+      y = targetObj.y - newObjSize.height - offset;
+      break;
+    case 'bottom-left':
+      x = targetObj.x - newObjSize.width - offset;
+      y = targetBottom + offset;
+      break;
+    case 'bottom-right':
+      x = targetRight + offset;
+      y = targetBottom + offset;
+      break;
+    case 'center':
+      x = targetCenterX - newObjSize.width / 2;
+      y = targetCenterY - newObjSize.height / 2;
+      break;
+    case 'inside':
+      // 在目标物体内部居中
+      x = targetObj.x + (targetObj.width - newObjSize.width) / 2;
+      y = targetObj.y + (targetObj.height - newObjSize.height) / 2;
+      break;
+    case 'outside':
+      // 默认放在右侧
+      x = targetRight + offset;
+      y = targetCenterY - newObjSize.height / 2;
+      break;
+    default:
+      return null;
+  }
+  
+  // 确保坐标在画布范围内
+  return {
+    x: Math.max(0, Math.min(750, x)),
+    y: Math.max(0, Math.min(550, y))
+  };
+};
+
 const askAI = async (userInput, currentObjects, selectedObj) => {
   const API_KEY = "sk-4ddc42fea38a4368b93263d55f0b59cd"; 
   const BASE_URL = "https://api.deepseek.com/v1/chat/completions";
@@ -78,6 +149,63 @@ const askAI = async (userInput, currentObjects, selectedObj) => {
   const systemPrompt = `你是一个专业的绘图助手，必须严格按照以下JSON schema返回结果。
 
 重要：请以纯json格式返回，不要添加任何额外文本。
+
+=== 上下文管理与指代消解 ===
+
+【指代消解规则】
+1. 单数代词指代：
+   - "它"、"这个"、"那个"、"刚才那个"、"刚才创建的" → 优先使用当前选中物体的ID
+   - 如果没有选中物体，使用最近创建的物体的ID
+   - 如果都没有，创建新物体
+
+2. 复数代词指代：
+   - "所有的方块"、"所有的圆形"、"所有的文本" → 返回包含多个目标ID的数组
+   - "它们" → 如果上一次操作涉及多个物体，使用那些物体的ID数组
+
+3. 类型匹配规则：
+   - "方块"、"矩形"、"正方形" → 匹配 type 为 "rect" 的物体
+   - "圆形"、"圆" → 匹配 type 为 "circle" 的物体
+   - "文本"、"文字" → 匹配 type 为 "text" 的物体
+   - "三角形" → 匹配 type 为 "triangle" 的物体
+
+4. 名称匹配规则：
+   - 如果用户提到具体名称（如"Title_Text"、"Red_Square"），精确匹配 name 属性
+   - 如果名称不区分大小写，进行不区分大小写的匹配
+
+5. 位置匹配规则：
+   - "左边的"、"右边的"、"上面的"、"下面的" → 根据坐标位置匹配物体
+   - "中间的"、"中心的" → 匹配靠近画布中心的物体
+
+【多目标操作格式】
+当用户要求对多个物体进行操作时，使用以下格式：
+
+{
+  "type": "MODIFY" | "ANIMATE" | "DELETE",
+  "ids": ["obj-1", "obj-2", "obj-3"], // 多个目标ID的数组
+  "properties": { ... }, // 仅MODIFY需要
+  "action": "...", // 仅ANIMATE需要
+  "duration": 1.0, // 仅ANIMATE需要
+  "params": { ... } // 仅ANIMATE需要
+}
+
+【指代消解示例】
+用户输入："创建一个红色正方形"
+返回：{"type":"CREATE","shape":"rect","color":"#ff0000","position":{"x":400,"y":300},"size":{"width":100,"height":100},"name":"Red_Square"}
+
+用户输入："把它变大"
+返回：{"type":"MODIFY","id":"Red_Square","properties":{"size":{"width":150,"height":150}}}
+
+用户输入："创建一个蓝色圆形"
+返回：{"type":"CREATE","shape":"circle","color":"#0000ff","position":{"x":200,"y":200},"size":{"width":80,"height":80},"name":"Blue_Circle"}
+
+用户输入："让所有的方块变成绿色"
+返回：{"type":"MODIFY","ids":["Red_Square","obj-123"],"properties":{"color":"#00ff00"}}
+
+用户输入："删除所有的圆形"
+返回：{"type":"DELETE","ids":["Blue_Circle","obj-456"]}
+
+用户输入："让它们旋转"
+返回：{"type":"ANIMATE","ids":["Red_Square","Blue_Circle"],"action":"rotate","duration":1.0,"params":{"rotation":360}}
 
 === 画布信息 ===
 - 画布宽度：800px
@@ -136,6 +264,38 @@ ${JSON.stringify(selectedObj ? {id: selectedObj.id, name: selectedObj.name, type
   - stroke: 描边颜色，十六进制格式，默认 #1e293b
   - strokeWidth: 描边宽度，数字，默认 4
 
+=== 相对空间关系 ===
+
+【相对位置定义】
+当用户描述物体之间的相对位置时，使用 relativePosition 字段代替绝对坐标 position。
+
+{
+  "relativePosition": {
+    "targetId": string, // 参考物体的ID
+    "direction": "left" | "right" | "top" | "bottom" | "top-left" | "top-right" | "bottom-left" | "bottom-right" | "center" | "inside" | "outside",
+    "offset": number // 距离参考物体的偏移量（像素），默认为 10
+  }
+}
+
+【方向说明】
+- "left": 在参考物体的左侧
+- "right": 在参考物体的右侧
+- "top": 在参考物体的上方
+- "bottom": 在参考物体的下方
+- "top-left": 在参考物体的左上方
+- "top-right": 在参考物体的右上方
+- "bottom-left": 在参考物体的左下方
+- "bottom-right": 在参考物体的右下方
+- "center": 在参考物体的中心（重叠）
+- "inside": 在参考物体内部（用于嵌套）
+- "outside": 在参考物体外部（默认偏移距离）
+
+【使用规则】
+1. 当用户描述相对位置时（如"在obj-1的右边"、"在红色方块下面"），优先使用 relativePosition
+2. 当用户描述绝对位置时（如"在画布中间"、"在左上角"），使用 position
+3. 不要同时使用 position 和 relativePosition
+4. 如果无法确定参考物体，使用绝对坐标 position
+
 === 操作类型 ===
 
 【创建物体 (CREATE)】
@@ -143,9 +303,14 @@ ${JSON.stringify(selectedObj ? {id: selectedObj.id, name: selectedObj.name, type
   "type": "CREATE",
   "shape": "rect" | "circle" | "text" | "triangle" | "path",
   "color": "#RRGGBB",
-  "position": {
+  "position": { // 绝对坐标，与 relativePosition 二选一
     "x": number,
     "y": number
+  },
+  "relativePosition": { // 相对坐标，与 position 二选一
+    "targetId": string,
+    "direction": "left" | "right" | "top" | "bottom" | "top-left" | "top-right" | "bottom-left" | "bottom-right" | "center" | "inside" | "outside",
+    "offset": number
   },
   "size": {
     "width": number,
@@ -163,7 +328,8 @@ ${JSON.stringify(selectedObj ? {id: selectedObj.id, name: selectedObj.name, type
 【修改物体 (MODIFY)】
 {
   "type": "MODIFY",
-  "id": string, // 必须是当前物体列表中存在的ID
+  "id": string, // 单一目标ID，与ids二选一
+  "ids": ["obj-1", "obj-2"], // 多个目标ID数组，与id二选一
   "properties": {
     "position": {"x": number, "y": number}, // 可选
     "size": {"width": number, "height": number}, // 可选
@@ -178,7 +344,8 @@ ${JSON.stringify(selectedObj ? {id: selectedObj.id, name: selectedObj.name, type
 【动画物体 (ANIMATE)】
 {
   "type": "ANIMATE",
-  "id": string, // 必须是当前物体列表中存在的ID
+  "id": string, // 单一目标ID，与ids二选一
+  "ids": ["obj-1", "obj-2"], // 多个目标ID数组，与id二选一
   "action": "rotate" | "scale" | "move" | "fade",
   "duration": number, // 0.5-5秒
   "params": {
@@ -192,7 +359,8 @@ ${JSON.stringify(selectedObj ? {id: selectedObj.id, name: selectedObj.name, type
 【删除物体 (DELETE)】
 {
   "type": "DELETE",
-  "id": string // 必须是当前物体列表中存在的ID
+  "id": string, // 单一目标ID，与ids二选一
+  "ids": ["obj-1", "obj-2"] // 多个目标ID数组，与id二选一
 }
 
 === 重要规则 ===
@@ -222,6 +390,18 @@ ${JSON.stringify(selectedObj ? {id: selectedObj.id, name: selectedObj.name, type
 用户输入："把它变大"
 返回：{"type":"MODIFY","id":"obj-123","properties":{"size":{"width":150,"height":150}}}
 
+示例3a：相对位置创建
+用户输入："在红色方块右边创建一个蓝色圆形"
+返回：{"type":"CREATE","shape":"circle","color":"#0000ff","relativePosition":{"targetId":"Red_Square","direction":"right","offset":20},"size":{"width":80,"height":80},"name":"Blue_Circle_Right"}
+
+示例3b：相对位置创建（带偏移）
+用户输入："在obj-1的下方10像素处创建一个绿色三角形"
+返回：{"type":"CREATE","shape":"triangle","color":"#00ff00","relativePosition":{"targetId":"obj-1","direction":"bottom","offset":10},"size":{"width":60,"height":60},"name":"Green_Triangle_Below"}
+
+示例3c：对角线相对位置
+用户输入："在蓝色圆形的右上方创建一个黄色文本"
+返回：{"type":"CREATE","shape":"text","color":"#ffff00","relativePosition":{"targetId":"Blue_Circle","direction":"top-right","offset":15},"size":{"width":120,"height":40},"text":"Hello","fontSize":16,"name":"Yellow_Text_TR"}
+
 示例4：创建交互
 用户输入："创建一个红色的正方形，点击它时让那个叫 Title_Text 的文字变绿。"
 返回：{"type":"CREATE","shape":"rect","color":"#ff0000","position":{"x":400,"y":300},"size":{"width":100,"height":100},"name":"Red_Square","behaviors":[{"id":"bh-123","name":"点击变色","action":"modify","duration":0.5,"params":{"color":"#00ff00"},"targetId":"obj-2","createdAt":"2024-01-01T00:00:00Z","createdBy":"ai"}]}
@@ -236,7 +416,19 @@ ${JSON.stringify(selectedObj ? {id: selectedObj.id, name: selectedObj.name, type
 
 示例7：删除物体
 用户输入："删除obj-3"
-返回：{"type":"DELETE","id":"obj-3"}`;
+返回：{"type":"DELETE","id":"obj-3"}
+
+示例8：多目标修改
+用户输入："让所有的方块变成绿色"
+返回：{"type":"MODIFY","ids":["Red_Square","obj-123","obj-456"],"properties":{"color":"#00ff00"}}
+
+示例9：多目标删除
+用户输入："删除所有的圆形"
+返回：{"type":"DELETE","ids":["Blue_Circle","obj-789"]}
+
+示例10：多目标动画
+用户输入："让它们旋转"
+返回：{"type":"ANIMATE","ids":["Red_Square","Blue_Circle"],"action":"rotate","duration":1.0,"params":{"rotation":360}}`;
 
   // 构建消息数组，包含系统提示、历史对话和当前输入
   const messages = [
@@ -270,6 +462,12 @@ ${JSON.stringify(selectedObj ? {id: selectedObj.id, name: selectedObj.name, type
     if (conversationHistory.length > 10) {
       conversationHistory = conversationHistory.slice(-10);
     }
+    
+    // 记录训练数据（用于优化系统提示词）
+    logTrainingData(userInput, aiResponse, {
+      currentObjects: currentObjects,
+      selectedObj: selectedObj
+    });
     
     return JSON.parse(aiResponse);
   } catch (error) {
@@ -338,11 +536,44 @@ export default function App() {
       if (result.type === 'CREATE') {
         const newId = `obj-${Date.now()}`;
         
-        // 确保坐标和尺寸在合理范围内
-        const x = Math.max(0, Math.min(750, result.position?.x || 50 + Math.random() * 100));
-        const y = Math.max(0, Math.min(550, result.position?.y || 50 + Math.random() * 100));
+        // 确保尺寸在合理范围内
         const width = Math.max(10, Math.min(200, result.size?.width || 60));
         const height = Math.max(10, Math.min(200, result.size?.height || 60));
+        
+        // 处理位置：优先使用相对位置，其次使用绝对位置，最后使用随机位置
+        let x, y;
+        
+        if (result.relativePosition && result.relativePosition.targetId) {
+          // 使用相对位置
+          const targetObj = objects.find(o => o.id === result.relativePosition.targetId);
+          if (targetObj) {
+            const relativePos = calculateRelativePosition(
+              result.relativePosition,
+              targetObj,
+              { width, height }
+            );
+            if (relativePos) {
+              x = relativePos.x;
+              y = relativePos.y;
+            } else {
+              // 相对位置计算失败，使用默认位置
+              x = Math.max(0, Math.min(750, result.position?.x || 50 + Math.random() * 100));
+              y = Math.max(0, Math.min(550, result.position?.y || 50 + Math.random() * 100));
+            }
+          } else {
+            // 参考物体不存在，使用默认位置
+            x = Math.max(0, Math.min(750, result.position?.x || 50 + Math.random() * 100));
+            y = Math.max(0, Math.min(550, result.position?.y || 50 + Math.random() * 100));
+          }
+        } else if (result.position) {
+          // 使用绝对位置
+          x = Math.max(0, Math.min(750, result.position.x));
+          y = Math.max(0, Math.min(550, result.position.y));
+        } else {
+          // 使用随机位置
+          x = 50 + Math.random() * 100;
+          y = 50 + Math.random() * 100;
+        }
         
         // 校验颜色格式
         const validColor = validateColor(result.color);
@@ -403,7 +634,8 @@ export default function App() {
           alert(`AI 已成功绘制一个${validColor}的${shapeName}`);
         }
       } else if (result.type === 'MODIFY') {
-        if (result.id && result.properties) {
+        const targetIds = result.ids || (result.id ? [result.id] : []);
+        if (targetIds.length > 0 && result.properties) {
           const properties = {};
           
           // 处理位置更新
@@ -442,10 +674,14 @@ export default function App() {
             properties.borderRadius = Math.max(0, Math.min(50, result.properties.borderRadius));
           }
           
-          updateObject(result.id, properties);
+          // 对所有目标物体应用修改
+          targetIds.forEach(id => {
+            updateObject(id, properties);
+          });
         }
       } else if (result.type === 'ANIMATE') {
-        if (result.id && result.action && result.params) {
+        const targetIds = result.ids || (result.id ? [result.id] : []);
+        if (targetIds.length > 0 && result.action && result.params) {
           const ts = Date.now();
           let behaviorName = `点击${result.action}`;
           
@@ -467,21 +703,27 @@ export default function App() {
               break;
           }
           
-          updateObject(result.id, {
-            behaviors: [{ 
-              id: `bh-${ts}`, 
-              name: behaviorName,
-              action: result.action,
-              duration: Math.max(0.5, Math.min(5, result.duration || 1)),
-              params: result.params,
-              createdAt: new Date().toISOString(),
-              createdBy: 'ai'
-            }]
+          // 对所有目标物体应用动画
+          targetIds.forEach(id => {
+            updateObject(id, {
+              behaviors: [{ 
+                id: `bh-${ts}-${id}`, 
+                name: behaviorName,
+                action: result.action,
+                duration: Math.max(0.5, Math.min(5, result.duration || 1)),
+                params: result.params,
+                createdAt: new Date().toISOString(),
+                createdBy: 'ai'
+              }]
+            });
           });
         }
       } else if (result.type === 'DELETE') {
-        if (result.id) {
-          deleteObject(result.id);
+        const targetIds = result.ids || (result.id ? [result.id] : []);
+        if (targetIds.length > 0) {
+          targetIds.forEach(id => {
+            deleteObject(id);
+          });
         }
       }
       setInput('');

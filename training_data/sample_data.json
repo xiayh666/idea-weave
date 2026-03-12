@@ -1,0 +1,230 @@
+{
+  "dataset_name": "ECA_Designer_Training_Data",
+  "version": "1.0",
+  "description": "用于微调ECA协议理解的数据集",
+  "samples": [
+    {
+      "id": "sample_001",
+      "category": "CREATE",
+      "instruction": "你是一个专业的绘图助手。请根据用户输入返回JSON格式的绘图指令。",
+      "input": "创建一个红色的正方形在中间位置",
+      "context": {
+        "current_objects": [],
+        "selected_obj": null
+      },
+      "output": {
+        "type": "CREATE",
+        "shape": "rect",
+        "color": "#ff0000",
+        "position": {"x": 400, "y": 300},
+        "size": {"width": 100, "height": 100},
+        "name": "Red_Square"
+      }
+    },
+    {
+      "id": "sample_002",
+      "category": "CREATE_CIRCLE",
+      "instruction": "你是一个专业的绘图助手。请根据用户输入返回JSON格式的绘图指令。",
+      "input": "在右上角创建一个蓝色的圆形",
+      "context": {
+        "current_objects": [],
+        "selected_obj": null
+      },
+      "output": {
+        "type": "CREATE",
+        "shape": "circle",
+        "color": "#0000ff",
+        "position": {"x": 600, "y": 100},
+        "size": {"width": 80, "height": 80},
+        "name": "Blue_Circle"
+      }
+    },
+    {
+      "id": "sample_003",
+      "category": "MODIFY_PRONOUN",
+      "instruction": "你是一个专业的绘图助手。请根据用户输入返回JSON格式的绘图指令。",
+      "input": "把它变大",
+      "context": {
+        "current_objects": [
+          {"id": "obj-001", "name": "Yellow_Square", "type": "rect"}
+        ],
+        "selected_obj": {"id": "obj-001", "name": "Yellow_Square", "type": "rect"}
+      },
+      "output": {
+        "type": "MODIFY",
+        "id": "obj-001",
+        "properties": {
+          "size": {"width": 150, "height": 150}
+        }
+      }
+    },
+    {
+      "id": "sample_004",
+      "category": "INTERACTION",
+      "instruction": "你是一个专业的绘图助手。请根据用户输入返回JSON格式的绘图指令。",
+      "input": "创建一个红色的正方形，点击它时让那个叫 Title_Text 的文字变绿",
+      "context": {
+        "current_objects": [
+          {"id": "obj-text", "name": "Title_Text", "type": "text"}
+        ],
+        "selected_obj": null
+      },
+      "output": {
+        "type": "CREATE",
+        "shape": "rect",
+        "color": "#ff0000",
+        "position": {"x": 400, "y": 300},
+        "size": {"width": 100, "height": 100},
+        "name": "Red_Square",
+        "behaviors": [
+          {
+            "id": "bh-001",
+            "name": "点击变色",
+            "action": "modify",
+            "duration": 0.5,
+            "params": {"color": "#00ff00"},
+            "targetId": "obj-text",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "createdBy": "ai"
+          }
+        ]
+      }
+    },
+    {
+      "id": "sample_005",
+      "category": "RELATIVE_POSITION",
+      "instruction": "你是一个专业的绘图助手。请根据用户输入返回JSON格式的绘图指令。",
+      "input": "在红色方块右边创建一个蓝色圆形",
+      "context": {
+        "current_objects": [
+          {"id": "obj-001", "name": "Red_Square", "type": "rect", "x": 400, "y": 300, "width": 100, "height": 100}
+        ],
+        "selected_obj": null
+      },
+      "output": {
+        "type": "CREATE",
+        "shape": "circle",
+        "color": "#0000ff",
+        "relativePosition": {
+          "targetId": "obj-001",
+          "direction": "right",
+          "offset": 20
+        },
+        "size": {"width": 80, "height": 80},
+        "name": "Blue_Circle_Right"
+      }
+    },
+    {
+      "id": "sample_006",
+      "category": "MULTI_TARGET",
+      "instruction": "你是一个专业的绘图助手。请根据用户输入返回JSON格式的绘图指令。",
+      "input": "让所有的方块变成绿色",
+      "context": {
+        "current_objects": [
+          {"id": "obj-001", "name": "Red_Square", "type": "rect"},
+          {"id": "obj-002", "name": "Blue_Square", "type": "rect"},
+          {"id": "obj-003", "name": "Circle_1", "type": "circle"}
+        ],
+        "selected_obj": null
+      },
+      "output": {
+        "type": "MODIFY",
+        "ids": ["obj-001", "obj-002"],
+        "properties": {
+          "color": "#00ff00"
+        }
+      }
+    },
+    {
+      "id": "sample_007",
+      "category": "ANIMATE",
+      "instruction": "你是一个专业的绘图助手。请根据用户输入返回JSON格式的绘图指令。",
+      "input": "让obj-1旋转360度",
+      "context": {
+        "current_objects": [
+          {"id": "obj-001", "name": "Shape_1", "type": "rect"}
+        ],
+        "selected_obj": null
+      },
+      "output": {
+        "type": "ANIMATE",
+        "id": "obj-001",
+        "action": "rotate",
+        "duration": 1.0,
+        "params": {
+          "rotation": 360
+        }
+      }
+    },
+    {
+      "id": "sample_008",
+      "category": "DELETE",
+      "instruction": "你是一个专业的绘图助手。请根据用户输入返回JSON格式的绘图指令。",
+      "input": "删除所有的圆形",
+      "context": {
+        "current_objects": [
+          {"id": "obj-001", "name": "Circle_1", "type": "circle"},
+          {"id": "obj-002", "name": "Circle_2", "type": "circle"},
+          {"id": "obj-003", "name": "Square_1", "type": "rect"}
+        ],
+        "selected_obj": null
+      },
+      "output": {
+        "type": "DELETE",
+        "ids": ["obj-001", "obj-002"]
+      }
+    },
+    {
+      "id": "sample_009",
+      "category": "TEXT_CREATE",
+      "instruction": "你是一个专业的绘图助手。请根据用户输入返回JSON格式的绘图指令。",
+      "input": "在画布中间创建一个标题文字'Hello World'",
+      "context": {
+        "current_objects": [],
+        "selected_obj": null
+      },
+      "output": {
+        "type": "CREATE",
+        "shape": "text",
+        "color": "#1e293b",
+        "position": {"x": 400, "y": 300},
+        "size": {"width": 200, "height": 40},
+        "text": "Hello World",
+        "fontSize": 24,
+        "name": "Title_Text"
+      }
+    },
+    {
+      "id": "sample_010",
+      "category": "COLLISION",
+      "instruction": "你是一个专业的绘图助手。请根据用户输入返回JSON格式的绘图指令。",
+      "input": "创建一个蓝色的圆形，当它碰到obj-1时，让obj-1变成红色",
+      "context": {
+        "current_objects": [
+          {"id": "obj-001", "name": "Target_Obj", "type": "rect"}
+        ],
+        "selected_obj": null
+      },
+      "output": {
+        "type": "CREATE",
+        "shape": "circle",
+        "color": "#0000ff",
+        "position": {"x": 200, "y": 200},
+        "size": {"width": 80, "height": 80},
+        "name": "Blue_Circle",
+        "behaviors": [
+          {
+            "id": "bh-002",
+            "name": "碰撞变色",
+            "action": "collision",
+            "duration": 0.5,
+            "params": {"color": "#ff0000"},
+            "targetId": "obj-001",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "createdBy": "ai"
+          }
+        ]
+      }
+    }
+  ]
+}

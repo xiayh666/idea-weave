@@ -1,0 +1,28 @@
+{
+  "dataset_info": {
+    "name": "ECA_Designer_Dataset",
+    "version": "1.0",
+    "description": "自然语言到ECA（事件-条件-动作）协议的JSON转换数据集",
+    "total_samples": 0,
+    "categories": [
+      "CREATE",
+      "MODIFY",
+      "ANIMATE",
+      "DELETE",
+      "INTERACTION",
+      "RELATIVE_POSITION",
+      "MULTI_TARGET"
+    ]
+  },
+  "data_format": {
+    "instruction": "系统提示词，描述任务和JSON Schema",
+    "input": "用户的自然语言输入",
+    "output": "AI应该返回的JSON格式",
+    "context": {
+      "current_objects": "当前画布上的物体列表",
+      "selected_obj": "当前选中的物体",
+      "conversation_history": "对话历史"
+    }
+  },
+  "samples": []
+}
