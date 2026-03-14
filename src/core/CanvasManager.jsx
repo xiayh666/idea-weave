@@ -106,6 +106,7 @@ export class CanvasManager {
         }
 
 
+        // 每次重新渲染时重新绑定行为, 然后将带有行为的对象添加到画布中
         if (fObj) {
           this.bindObjectBehaviors(fObj, objData);
           this.canvas.add(fObj);
@@ -117,54 +118,14 @@ export class CanvasManager {
     this.canvas.renderAll();
   }
 
-  renderAll_() {
-    this.canvas.clear();
-    const isEditable = this.mode === 'edit';
-
-    this.objectsData.forEach((objData) => {
-      let fObj = null;
-      const commonProps = {
-        id: objData.id,
-        left: objData.x,
-        top: objData.y,
-        fill: objData.fillColor,
-        selectable: isEditable,
-        hoverCursor: isEditable ? 'move' : 'pointer',
-      };
-
-      if (objData.type === 'rect') {
-        fObj = new window.fabric.Rect({
-          ...commonProps,
-          width: objData.width,
-          height: objData.height,
-          rx: objData.borderRadius || 0,
-          ry: objData.borderRadius || 0,
-        });
-      } else if (objData.type === 'circle') {
-        fObj = new window.fabric.Circle({
-          ...commonProps,
-          radius: (objData.width || 100) / 2,
-        });
-      } else if (objData.type === 'text') {
-        fObj = new window.fabric.Text(objData.text || '', {
-          ...commonProps,
-          fontSize: objData.fontSize || 20,
-        });
-      }
-
-      if (fObj) {
-        this.bindObjectBehaviors(fObj, objData);
-        this.canvas.add(fObj);
-      }
-    });
-
-    this.canvas.renderAll();
-  }
 
   // 绑定单个物体的交互动画
   bindObjectBehaviors(fObj, objData) {
+    console.log(fObj, objData)
     fObj.on('mousedown', () => {
+      console.log("mousedown")
       if (this.mode !== 'play') return;
+
 
       const b = objData.behaviors?.[0];
       if (!b) return;

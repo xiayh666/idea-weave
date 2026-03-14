@@ -43,6 +43,7 @@ export const useCanvas = (objects, setObjects, mode, setSelectedId) => {
   useEffect(() => {
   if (managerRef.current) {
     managerRef.current.syncState(objects, mode);
+    managerRef.current.renderAll() // 为什么这里不能用renderAll? 移除后无法正常渲染
   }
 }, [objects, mode]);  // 移除了 isReady 依赖，移除了 renderAll() 调用
 

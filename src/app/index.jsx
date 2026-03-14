@@ -103,10 +103,15 @@ export default function App() {
     }
   }, [activeTool, canvasManager]);
 
+  
+
+
   const handleAICommand = async (cmd) => {
+    console.log("AI start")
     if (!cmd.trim()) return;
     try {
       const result = await askAI(cmd, objects);
+      console.log(result)
       if (result.type === 'CREATE') {
         const newId = `obj-${Date.now()}`;
         const newObj = {
@@ -132,7 +137,11 @@ export default function App() {
     } catch (error) {
       alert("AI 响应失败，请检查网络");
     }
+    console.log("AI End");
+    
   };
+
+  console.log(objects)
 
   if (isMobile) {
     return (
