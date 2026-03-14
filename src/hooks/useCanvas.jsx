@@ -19,7 +19,8 @@ export const useCanvas = (objects, setObjects, mode, setSelectedId) => {
           onModify: (id, updates) => {
             setObjects(prev => prev.map(obj => obj.id === id ? { ...obj, ...updates } : obj));
           },
-          onAdd: (newObj) => setObjects(prev => [...prev, newObj])
+          onAdd: (newObj) => setObjects(prev => [...prev, newObj]),
+          onDelete: (id) => setObjects(prev => prev.filter(obj => obj.id !== id))
         });
         setIsReady(true);
       };
@@ -34,7 +35,8 @@ export const useCanvas = (objects, setObjects, mode, setSelectedId) => {
         onModify: (id, updates) => {
           setObjects(prev => prev.map(obj => obj.id === id ? { ...obj, ...updates } : obj));
         },
-        onAdd: (newObj) => setObjects(prev => [...prev, newObj])
+        onAdd: (newObj) => setObjects(prev => [...prev, newObj]),
+        onDelete: (id) => setObjects(prev => prev.filter(obj => obj.id !== id))
       });
       setIsReady(true);
     }
@@ -50,10 +52,10 @@ export const useCanvas = (objects, setObjects, mode, setSelectedId) => {
   return { manager: managerRef.current, canvasRef };
 };
 
-export function CanvasRenderer({ objects, mode, canvasRef, onSelect, onModify }) {
+export function CanvasRenderer({ objects, mode, canvasRef, onSelect, onModify, onDelete }) {
   if (Platform.OS === 'web') {
     return <canvas id="fabric-canvas" width="800" height="600" />;
   } else {
-    return <MobileCanvas objects={objects} mode={mode} canvasRef={canvasRef} onSelect={onSelect} onModify={onModify} />;
+    return <MobileCanvas objects={objects} mode={mode} canvasRef={canvasRef} onSelect={onSelect} onModify={onModify} onDelete={onDelete} />;
   }
 }

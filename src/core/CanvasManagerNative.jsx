@@ -1,4 +1,4 @@
-import { Dimensions, StyleSheet, View } from 'react-native';
+import { Dimensions, PanResponder, StyleSheet, View } from 'react-native';
 import Svg, { Circle, Path, Rect, Text as SvgText } from 'react-native-svg';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -14,6 +14,7 @@ export class CanvasManagerNative {
     this.onSelect = options.onSelect || (() => {});
     this.onModify = options.onModify || (() => {});
     this.onAdd = options.onAdd || (() => {});
+    this.onDelete = options.onDelete || (() => {});
   }
 
   setTool(tool) {
@@ -41,10 +42,18 @@ export class CanvasManagerNative {
   }
 }
 
-export function MobileCanvas({ objects, mode, canvasRef, onSelect, onModify }) {
+export function MobileCanvas({ objects, mode, canvasRef, onSelect, onModify, onDelete }) {
   const handleObjectPress = (id) => {
-    if (onSelect) {
-      onSelect(id);
+    if (mode === 'edit') {
+      if (canvasRef?.current?.activeTool === 'erase') {
+        // 橡皮擦模式：删除物体
+        if (onDelete) {
+          onDelete(id);
+        }
+      } else if (onSelect) {
+        // 其他模式：选中物体
+        onSelect(id);
+      }
     }
   };
 
@@ -52,6 +61,38 @@ export function MobileCanvas({ objects, mode, canvasRef, onSelect, onModify }) {
   const scaleX = CANVAS_WIDTH / 300;
   const scaleY = CANVAS_HEIGHT / 400;
   const scale = Math.min(scaleX, scaleY);
+
+  // 处理拖拽
+  const handleDrag = (id, offsetX, offsetY) => {
+    if (mode === 'edit' && onModify) {
+      const scaledOffsetX = offsetX / scale;
+      const scaledOffsetY = offsetY / scale;
+      onModify(id, {
+        x: objects.find(obj => obj.id === id).x + scaledOffsetX,
+        y: objects.find(obj => obj.id === id).y + scaledOffsetY
+      });
+    }
+  };
+
+  // 为每个对象创建 PanResponder
+  const createPanResponder = (id) => {
+    return PanResponder.create({
+      onStartShouldSetPanResponder: () => mode === 'edit' && canvasRef?.current?.activeTool !== 'erase',
+      onMoveShouldSetPanResponder: () => mode === 'edit' && canvasRef?.current?.activeTool !== 'erase',
+      onPanResponderGrant: () => {
+        // 开始拖拽时选中对象
+        if (onSelect && canvasRef?.current?.activeTool !== 'erase') {
+          onSelect(id);
+        }
+      },
+      onPanResponderMove: (event, gestureState) => {
+        handleDrag(id, gestureState.dx, gestureState.dy);
+      },
+      onPanResponderRelease: () => {
+        // 拖拽结束
+      }
+    });
+  };
 
   return (
     <View style={styles.container}>
@@ -62,6 +103,9 @@ export function MobileCanvas({ objects, mode, canvasRef, onSelect, onModify }) {
           const scaledWidth = (obj.width || 50) * scale;
           const scaledHeight = (obj.height || 50) * scale;
           const scaledFontSize = (obj.fontSize || 16) * scale;
+          
+          // 创建拖拽响应器
+          const panResponder = createPanResponder(obj.id);
 
           if (obj.type === 'rect') {
             return (
@@ -75,6 +119,7 @@ export function MobileCanvas({ objects, mode, canvasRef, onSelect, onModify }) {
                 rx={(obj.borderRadius || 0) * scale}
                 ry={(obj.borderRadius || 0) * scale}
                 onPress={() => handleObjectPress(obj.id)}
+                {...panResponder.panHandlers}
               />
             );
           } else if (obj.type === 'circle') {
@@ -86,6 +131,7 @@ export function MobileCanvas({ objects, mode, canvasRef, onSelect, onModify }) {
                 r={Math.min(scaledWidth, scaledHeight) / 2}
                 fill={obj.fillColor}
                 onPress={() => handleObjectPress(obj.id)}
+                {...panResponder.panHandlers}
               />
             );
           } else if (obj.type === 'text') {
@@ -97,6 +143,7 @@ export function MobileCanvas({ objects, mode, canvasRef, onSelect, onModify }) {
                 fontSize={scaledFontSize}
                 fill={obj.fillColor}
                 onPress={() => handleObjectPress(obj.id)}
+                {...panResponder.panHandlers}
               >
                 {obj.text || ''}
               </SvgText>
@@ -113,6 +160,7 @@ export function MobileCanvas({ objects, mode, canvasRef, onSelect, onModify }) {
                 stroke={obj.stroke || '#000'}
                 strokeWidth={(obj.strokeWidth || 2) * scale}
                 onPress={() => handleObjectPress(obj.id)}
+                {...panResponder.panHandlers}
               />
             );
           }
@@ -125,7 +173,7 @@ export function MobileCanvas({ objects, mode, canvasRef, onSelect, onModify }) {
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
+    flex:1,
     backgroundColor: 'white',
     justifyContent: 'center',
     alignItems: 'center',
