@@ -1,197 +1,220 @@
-# 四大原语体系使用指南
+# 行为树引擎使用指南
 
 ## 1. 概述
 
-四大原语体系是完整的交互行为系统，包含：
+行为树交互引擎是完整的“图灵完备”图形逻辑系统，采用“实体-行为树”解耦架构，包含：
 
-- **事件原语**：onDrag、onHover、onHoverOut、onTimer
-- **逻辑原语**：if、repeat、wait、while、foreach、call、sequence、parallel
+* **触发器 (Triggers)**：onClick、onDrag、onHover、onHoverOut、onTimer
+* **组合/装饰节点 (Composite/Decorator Nodes)**：sequence (顺序)、selector (选择/分支)、parallel (并行)、repeat (循环)、foreach (遍历)
+* **叶子节点 (Leaf Nodes)**：
+* **条件判断 (Condition)**：isColliding、isSelected、equals
+* **执行动作 (Action)**：modify、move、rotate、scale、fade、wait、call
 
-## 2. 事件原语
 
-### 2.1 onDrag (拖拽事件)
 
-当用户拖拽物体时触发的行为。
+所有对象的行为配置都统一存放在 `behaviors` 数组中。
+
+## 2. 触发器 (Triggers)
+
+触发器用于唤醒行为树，它们位于配置的最外层。
+
+### 2.1 onClick (点击触发)
+
+当用户点击物体时触发的行为树。
 
 ```json
 {
-  "action": "drag",
-  "params": {
-    "onDrag": {
-      "targetId": "目标物体ID",
-      "action": {
-        "action": "modify|rotate|scale|fade",
-        "params": {...},
-        "duration": 1000
-      }
+  "trigger": "onClick",
+  "behaviorTree": {
+    "node": "action",
+    "name": "modify",
+    "params": {"color": "#ff0000"}
+  }
+}
+
+```
+
+**示例**：
+
+```
+用户输入："创建一个矩形，点击时变红"
+
+```
+
+### 2.2 onDrag (拖拽触发)
+
+当用户拖拽物体时持续触发的行为树。
+
+```json
+{
+  "trigger": "onDrag",
+  "behaviorTree": {
+    "node": "action",
+    "name": "modify",
+    "params": {"opacity": 0.5}
+  }
+}
+
+```
+
+**示例**：
+
+```
+用户输入："创建一个矩形，拖拽时变成半透明"
+
+```
+
+### 2.3 onHover / onHoverOut (悬停/移出触发)
+
+当鼠标进入或离开物体时触发。
+
+```json
+{
+  "trigger": "onHover",
+  "behaviorTree": {
+    "node": "action",
+    "name": "scale",
+    "params": {"scaleX": 1.5, "scaleY": 1.5},
+    "duration": 300
+  }
+}
+
+```
+
+**示例**：
+
+```
+用户输入："创建一个矩形，鼠标悬停时平滑放大"
+
+```
+
+### 2.4 onTimer (定时器触发)
+
+定期自动执行的行为树。
+
+```json
+{
+  "trigger": "onTimer",
+  "triggerParams": { "interval": 1000 },
+  "behaviorTree": {
+    "node": "action",
+    "name": "rotate",
+    "params": {"angle": 30},
+    "duration": 500
+  }
+}
+
+```
+
+**示例**：
+
+```
+用户输入："创建一个箭头，每秒自动旋转30度"
+
+```
+
+## 3. 逻辑控制节点 (Composite & Decorator Nodes)
+
+### 3.1 selector (选择/条件分支)
+
+完美替代 if-else。按顺序尝试子节点，**只要有一个成功就返回成功**。常与 condition 节点组合使用。
+
+```json
+{
+  "node": "selector",
+  "children": [
+    {
+      "node": "sequence",
+      "children": [
+        { "node": "condition", "name": "isColliding", "params": {"targetId": "obj-2"} },
+        { "node": "action", "name": "modify", "params": {"color": "red"} }
+      ]
+    },
+    {
+      "node": "action",
+      "name": "modify",
+      "params": {"color": "blue"}
     }
-  }
+  ]
 }
+
 ```
 
 **示例**：
-```
-用户输入："创建一个矩形，拖拽时让obj-1变绿"
-```
 
-### 2.2 onHover (悬停事件)
-
-当鼠标悬停在物体上时触发的行为。
-
-```json
-{
-  "action": "hover",
-  "params": {
-    "onHover": {
-      "targetId": "目标物体ID",
-      "action": {
-        "action": "modify|rotate|scale|fade",
-        "params": {...},
-        "duration": 1000
-      }
-    }
-  }
-}
-```
-
-**示例**：
-```
-用户输入："创建一个矩形，鼠标悬停时变大"
-```
-
-### 2.3 onHoverOut (悬停退出事件)
-
-当鼠标离开物体时触发的行为。
-
-```json
-{
-  "action": "hoverOut",
-  "params": {
-    "onHoverOut": {
-      "targetId": "目标物体ID",
-      "action": {
-        "action": "modify|rotate|scale|fade",
-        "params": {...},
-        "duration": 1000
-      }
-    }
-  }
-}
-```
-
-**示例**：
-```
-用户输入："创建一个矩形，鼠标离开时恢复原始大小"
-```
-
-### 2.4 onTimer (定时器事件)
-
-定期执行的行为。
-
-```json
-{
-  "action": "timer",
-  "params": {
-    "interval": 1000,
-    "actions": [
-      {
-        "action": "modify|rotate|scale|fade",
-        "params": {...},
-        "duration": 1000
-      }
-    ]
-  }
-}
-```
-
-**示例**：
-```
-用户输入："创建一个每秒旋转30度的箭头"
-```
-
-## 3. 逻辑原语
-
-### 3.1 if (条件判断)
-
-根据条件执行不同的行为。
-
-```json
-{
-  "action": "if",
-  "params": {
-    "condition": "isColliding|isSelected|equals(prop,value)",
-    "then": [...],
-    "else": [...]
-  }
-}
-```
-
-**支持的条件**：
-- `isColliding`：物体正在碰撞
-- `isSelected`：物体被选中
-- `equals(prop,value)`：属性等于指定值
-
-**示例**：
 ```
 用户输入："创建一个矩形，如果碰撞则变红，否则保持蓝色"
+
 ```
 
 ### 3.2 repeat (重复执行)
 
-重复执行一组行为。
+重复执行其包裹的子树。
 
 ```json
 {
-  "action": "repeat",
-  "params": {
-    "count": 3,
-    "delay": 100,
-    "actions": [...]
+  "node": "repeat",
+  "params": { "count": 3 },
+  "child": {
+    "node": "action",
+    "name": "fade",
+    "params": {"opacity": 0},
+    "duration": 500
   }
 }
+
 ```
 
 **示例**：
+
 ```
 用户输入："让obj-1闪烁3次"
+
 ```
 
-### 3.3 wait (等待延迟)
+### 3.3 sequence (顺序执行)
 
-等待指定时间。
+按顺序执行一组行为，上一个执行完毕（SUCCESS）才执行下一个。
 
 ```json
 {
-  "action": "wait",
-  "params": {
-    "duration": 1000
-  }
+  "node": "sequence",
+  "children": [
+    { "node": "action", "name": "modify", "params": {"color": "red"} },
+    { "node": "action", "name": "wait", "duration": 1000 },
+    { "node": "action", "name": "modify", "params": {"color": "blue"} }
+  ]
 }
+
 ```
 
 **示例**：
+
 ```
 用户输入："先变红，等待1秒，再变蓝"
+
 ```
 
-### 3.4 while (循环执行)
+### 3.4 parallel (并行执行)
 
-在条件满足时循环执行。
+同时执行一组行为。
 
 ```json
 {
-  "action": "while",
-  "params": {
-    "condition": "isColliding|isSelected",
-    "interval": 100,
-    "actions": [...]
-  }
+  "node": "parallel",
+  "children": [
+    { "node": "action", "name": "rotate", "params": {"angle": 360}, "duration": 2000 },
+    { "node": "action", "name": "scale", "params": {"scaleX": 1.5, "scaleY": 1.5}, "duration": 2000 }
+  ]
 }
+
 ```
 
 **示例**：
+
 ```
-用户输入："创建一个圆形，当它被选中时持续旋转"
+用户输入："创建一个同时旋转和缩放的圆形"
+
 ```
 
 ### 3.5 foreach (遍历执行)
@@ -200,198 +223,93 @@
 
 ```json
 {
-  "action": "foreach",
-  "params": {
-    "items": ["obj-1", "obj-2", "obj-3"],
-    "action": {...}
+  "node": "foreach",
+  "params": { "targetIds": ["obj-1", "obj-2", "obj-3"] },
+  "child": {
+    "node": "action",
+    "name": "scale",
+    "params": {"scaleX": 2.0, "scaleY": 2.0},
+    "duration": 500
   }
 }
+
 ```
 
 **示例**：
+
 ```
-用户输入："让所有的方块同时变大"
+用户输入："让指定的三个方块同时变大"
+
 ```
 
-### 3.6 call (调用行为)
+## 4. 复合行为树示例
 
-调用其他物体的行为。
+### 4.1 闪烁效果 (Repeat + Sequence)
 
 ```json
 {
-  "action": "call",
-  "params": {
-    "targetId": "目标物体ID",
-    "actionName": "行为名称"
-  }
-}
-```
-
-### 3.7 sequence (顺序执行)
-
-按顺序执行一组行为。
-
-```json
-{
-  "action": "sequence",
-  "params": {
-    "actions": [...]
-  }
-}
-```
-
-**示例**：
-```
-用户输入："创建一个先变红再变蓝的正方形"
-```
-
-### 3.8 parallel (并行执行)
-
-并行执行一组行为。
-
-```json
-{
-  "action": "parallel",
-  "params": {
-    "actions": [...]
-  }
-}
-```
-
-**示例**：
-```
-用户输入："创建一个同时旋转和缩放的圆形"
-```
-
-## 4. 复合行为示例
-
-### 4.1 闪烁效果
-
-```json
-{
-  "action": "repeat",
-  "params": {
-    "count": 3,
-    "delay": 200,
-    "actions": [
-      {
-        "action": "fade",
-        "params": {"opacity": 0},
-        "duration": 100
-      },
-      {
-        "action": "wait",
-        "params": {"duration": 100}
-      },
-      {
-        "action": "fade",
-        "params": {"opacity": 1},
-        "duration": 100
-      }
-    ]
-  }
-}
-```
-
-### 4.2 碰撞后闪烁
-
-```json
-{
-  "action": "if",
-  "params": {
-    "condition": "isColliding",
-    "then": [
-      {
-        "action": "repeat",
-        "params": {
-          "count": 3,
-          "actions": [...]
-        }
-      }
-    ]
-  }
-}
-```
-
-### 4.3 悬停效果
-
-```json
-[
-  {
-    "action": "hover",
-    "params": {
-      "onHover": {
-        "targetId": "Hover_Rect",
-        "action": {
-          "action": "scale",
-          "params": {"scale": 1.5},
-          "duration": 300
-        }
-      }
-    }
-  },
-  {
-    "action": "hoverOut",
-    "params": {
-      "onHoverOut": {
-        "targetId": "Hover_Rect",
-        "action": {
-          "action": "scale",
-          "params": {"scale": 1.0},
-          "duration": 300
-        }
-      }
+  "trigger": "onClick",
+  "behaviorTree": {
+    "node": "repeat",
+    "params": { "count": 3 },
+    "child": {
+      "node": "sequence",
+      "children": [
+        { "node": "action", "name": "fade", "params": {"opacity": 0}, "duration": 200 },
+        { "node": "action", "name": "fade", "params": {"opacity": 1}, "duration": 200 }
+      ]
     }
   }
-]
+}
+
 ```
 
-### 4.4 顺序动画
+### 4.2 拖拽碰撞变色 (Selector 实现 If-Else)
 
 ```json
 {
-  "action": "sequence",
-  "params": {
-    "actions": [
+  "trigger": "onDrag",
+  "behaviorTree": {
+    "node": "selector",
+    "children": [
       {
-        "action": "modify",
-        "params": {"color": "#ff0000"},
-        "duration": 500
+        "node": "sequence",
+        "children": [
+          { "node": "condition", "name": "isColliding", "params": {"targetId": "danger-zone"} },
+          { "node": "action", "name": "modify", "params": {"color": "red"} }
+        ]
       },
       {
-        "action": "wait",
-        "params": {"duration": 500}
-      },
-      {
-        "action": "modify",
-        "params": {"color": "#0000ff"},
-        "duration": 500
+        "node": "action", "name": "modify", "params": {"color": "green"}
       }
     ]
   }
 }
+
 ```
 
-### 4.5 并行动画
+### 4.3 复杂顺序与并行动画
 
 ```json
 {
-  "action": "parallel",
-  "params": {
-    "actions": [
+  "trigger": "onClick",
+  "behaviorTree": {
+    "node": "sequence",
+    "children": [
       {
-        "action": "rotate",
-        "params": {"rotation": 360},
-        "duration": 2000
+        "node": "action", "name": "modify", "params": {"color": "#ff0000"}
       },
       {
-        "action": "scale",
-        "params": {"scale": 1.5},
-        "duration": 2000
+        "node": "parallel",
+        "children": [
+          { "node": "action", "name": "move", "params": {"dx": 100, "dy": 0}, "duration": 500 },
+          { "node": "action", "name": "scale", "params": {"scaleX": 1.5, "scaleY": 1.5}, "duration": 500 }
+        ]
       }
     ]
   }
 }
+
 ```
 
 ## 5. 使用方法
@@ -401,15 +319,11 @@
 直接使用自然语言描述你的需求：
 
 ```
-"让obj-1闪烁3次"
+"让obj-1点击时闪烁3次"
 "创建一个每秒旋转30度的箭头"
-"创建一个矩形，鼠标悬停时变大，离开时恢复"
-"创建一个先变红再变蓝的正方形"
-"创建一个同时旋转和缩放的圆形"
-"创建一个矩形，如果碰撞则变红，否则保持蓝色"
-"创建一个圆形，当它被选中时持续旋转"
-"创建一个矩形，拖拽时让obj-1变绿"
-"让所有的方块同时变大"
+"创建一个矩形，如果碰撞到目标就变红，否则保持蓝色"
+"创建一个圆形，点击时先变红，然后同时向右移动并放大"
+
 ```
 
 ### 5.2 手动配置
@@ -417,102 +331,81 @@
 在 PropertyPanel 中手动配置行为：
 
 1. 选择物体
-2. 在"行为"配置项中添加行为
-3. 选择行为类型（事件原语或逻辑原语）
+2. 在"行为"配置项中选择触发器（如 onClick）
+3. 组合添加行为树节点（Sequence, Action 等）
 4. 配置参数
 
 ### 5.3 AI 生成
 
-通过自然语言描述，AI 会自动生成对应的 JSON 配置：
+通过自然语言描述，AI 会自动生成带有行为树的标准 JSON 配置：
 
 ```
-用户输入："创建一个矩形，拖拽时让obj-1变绿"
+用户输入："创建一个矩形，拖拽时如果碰到obj-1就变绿"
 AI 返回：
 {
-  "type": "CREATE",
-  "shape": "rect",
-  "color": "#3862f6",
-  "position": {"x": 400, "y": 300},
-  "size": {"width": 100, "height": 100},
-  "name": "Drag_Trigger",
-  "behaviors": [{
-    "id": "bh-010",
-    "name": "拖拽触发",
-    "action": "drag",
-    "params": {
-      "onDrag": {
-        "targetId": "obj-1",
-        "action": {
-          "action": "modify",
-          "params": {"color": "#00ff00"},
-          "duration": 500
-        }
+  "type": "rect",
+  "id": "drag-box-1",
+  "fillColor": "#3862f6",
+  "x": 400, "y": 300,
+  "width": 100, "height": 100,
+  "behaviors": [
+    {
+      "trigger": "onDrag",
+      "behaviorTree": {
+        "node": "selector",
+        "children": [
+          {
+            "node": "sequence",
+            "children": [
+              { "node": "condition", "name": "isColliding", "params": {"targetId": "obj-1"} },
+              { "node": "action", "name": "modify", "params": {"color": "#00ff00"} }
+            ]
+          }
+        ]
       }
     }
-  }]
+  ]
 }
+
 ```
 
-## 6. 行为执行流程
+## 6. 行为树执行流程 (Engine Tick)
 
-1. **事件触发**：用户操作（拖拽、悬停等）或定时器触发
-2. **条件判断**：执行 if/while 等逻辑原语
-3. **行为执行**：执行 modify/rotate/scale/fade 等动作
-4. **状态同步**：将状态变化同步到 React
+1. **唤醒 (Trigger)**：用户操作（拖拽、点击等）命中配置的 `trigger`。
+2. **建树 (Build)**：BTEngine 根据 JSON 瞬间实例化一棵行为树。
+3. **心跳 (Tick)**：在 `requestAnimationFrame` (每秒60帧) 中，引擎不断 Tick 活跃的树。
+4. **状态流转 (Status)**：带有 `duration` 的动画在播放时返回 `RUNNING` 挂起线程，播放完毕返回 `SUCCESS`。
+5. **自动销毁 (Destroy)**：当树的根节点返回 `SUCCESS` 或 `FAILURE` 时，树的生命周期结束，自动移出引擎。
 
 ## 7. 注意事项
 
-1. **行为顺序**：多个行为按数组顺序执行
-2. **异步处理**：wait、sequence 等支持异步执行
-3. **状态同步**：所有动画结束后自动同步到 React
-4. **性能优化**：避免过多的定时器和循环
+1. **禁止死循环**：`while` 逻辑已被 `repeat` 和定时触发器取代，行为树绝不会导致浏览器阻塞。
+2. **状态同步**：瞬时 Action 和 持续动画 Action 在执行完毕后，引擎会自动调用 `CanvasManager.modifyObject()` 将最终状态同步回 React，**不要手动干预**。
+3. **Selector 兜底逻辑**：在设计 `if-else` 时，务必在 `selector` 的最后放入一个一定能 SUCCESS 的无条件 Action 作为兜底（Fallback），以保证状态恢复。
 
 ## 8. 完整示例
 
-### 8.1 交互式仪表盘
+### 8.1 交互式游戏：躲避下落方块
 
 ```
-用户输入："创建一个仪表盘，包含3个指标卡片，鼠标悬停时放大，点击时显示详细信息"
-```
-
-AI 生成：
-- 3个卡片（矩形）
-- 悬停放大（hover + scale）
-- 点击显示信息（mousedown + call）
-
-### 8.2 动态图表
+用户输入："创建一个红色方块(玩家)，可以拖拽。如果有落下的石头碰到玩家，玩家闪烁消失。"
 
 ```
-用户输入："创建一个动态图表，数据每秒更新，超出阈值时变红"
-```
 
-AI 生成：
-- 定时器（timer）
-- 数据更新（modify）
-- 条件判断（if）
+AI 生成解析：
 
-### 8.3 交互式游戏
-
-```
-用户输入："创建一个躲避游戏，玩家控制圆形，躲避下落的方块，碰到则游戏结束"
-```
-
-AI 生成：
-- 玩家控制（drag）
-- 方块下落（timer + move）
-- 碰撞检测（while + if）
-- 游戏结束（modify + fade）
+* 玩家控制：挂载 `onDrag` 触发器，内部只做拖拽无需额外配置。
+* 石头下落：挂载 `onTimer`，行为树为 `move` 向下移动。
+* 碰撞检测：挂载在玩家上的 `onTimer`，每秒Tick检查：
+`selector` -> `sequence` (检查条件 `isColliding` 匹配石头 -> `repeat` 闪烁 -> `fade` 消失)。
 
 ## 9. 调试技巧
 
-1. **查看控制台**：检查行为执行日志
-2. **简化测试**：先测试单个行为，再组合
-3. **逐步添加**：逐步添加行为，观察效果
-4. **使用 delay**：在复杂行为中添加 delay，便于观察
+1. **检查活跃树**：在控制台打印 `BTEngine.activeTrees`，观察动画卡住时是否有一直处于 `RUNNING` 状态的孤儿树。
+2. **分离条件与动作**：先测试 `action` 是否生效，再往外包裹 `condition` 和 `selector`。
+3. **合理使用 Wait**：在复杂的 `sequence` 中插入 `wait` 节点，可以像打断点一样观察每一步的状态变化。
 
 ## 10. 性能优化
 
-1. **减少定时器**：使用并行代替多个定时器
-2. **优化循环**：避免无限循环
-3. **条件优化**：使用高效的条件判断
-4. **状态同步**：批量同步状态，减少重渲染
+1. **避免全局高频 Timer**：对于碰撞检测，尽量挂载在物体的 `onDrag` 触发器上，而不是全局起一个高频 `onTimer`。
+2. **利用 Parallel**：多个动画同时播放必须使用 `parallel` 节点，它能确保多个动画在同一个 `requestAnimationFrame` 周期内平滑渲染。

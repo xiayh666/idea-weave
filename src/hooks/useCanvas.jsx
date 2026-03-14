@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
-import { CanvasManager } from '../core/CanvasManager';
+import { BTEngine } from '../core/BTEngine';
+import { CanvasManager } from '../core/canvasManager';
 import { CanvasManagerNative, MobileCanvas } from '../core/CanvasManagerNative';
 
 export const useCanvas = (objects, setObjects, mode, setSelectedId) => {
   const managerRef = useRef(null);
   const canvasRef = useRef(null);
+  const btEnginRef = useRef(null);
   const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
@@ -22,9 +24,16 @@ export const useCanvas = (objects, setObjects, mode, setSelectedId) => {
           onAdd: (newObj) => setObjects(prev => [...prev, newObj]),
           onDelete: (id) => setObjects(prev => prev.filter(obj => obj.id !== id))
         });
+        
+        btEnginRef.current = new BTEngine(managerRef.current);
+        btEnginRef.current.start();
+        managerRef.current.renderAll()
+
+        managerRef.current.syncState(objects, mode);
         setIsReady(true);
       };
       document.body.appendChild(script);
+
       return () => {
         if (managerRef.current) managerRef.current.destroy();
         script.remove();
@@ -39,12 +48,14 @@ export const useCanvas = (objects, setObjects, mode, setSelectedId) => {
         onDelete: (id) => setObjects(prev => prev.filter(obj => obj.id !== id))
       });
       setIsReady(true);
+
     }
   }, []);
 
   useEffect(() => {
   if (managerRef.current) {
     managerRef.current.syncState(objects, mode);
+    console.log(objects)
     managerRef.current.renderAll() // 为什么这里不能用renderAll? 移除后无法正常渲染
   }
 }, [objects, mode]);  // 移除了 isReady 依赖，移除了 renderAll() 调用
