@@ -1,0 +1,15 @@
+{
+    "paths": {
+        "base_model": "./models/Qwen2.5-1.5B-Instruct",
+        "lora_path": "./lora_adapter",
+        "merged_path": "./merged_model",
+        "dataset_path": "./dataset3.jsonl"
+    },
+    "train_params": {
+        "max_steps": "120",
+        "lora_r": "16",
+        "learning_rate": "2e-4",
+        "batch_size": "1",
+        "grad_accum": "4"
+    }
+}

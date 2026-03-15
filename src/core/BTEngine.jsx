@@ -1,3 +1,5 @@
+import utils from "../utils/utils";
+
 // 1. 行为树核心状态枚举
 export const BTStatus = {
   SUCCESS: 1,
@@ -11,7 +13,7 @@ export class BTNode {
     throw new Error("必须在子类中实现 tick 方法");
   }
   // 用于重置节点状态（例如循环执行时）
-  reset() {}
+  reset() { }
 }
 
 // 顺序节点 (Sequence)：按顺序执行，遇到失败则整体失败，全部成功才算成功
@@ -90,41 +92,204 @@ export class ActionNode extends BTNode {
     const { canvasManager, targetObj } = context;
     if (!targetObj) return BTStatus.FAILURE;
 
-    // 1. 瞬时动作 (如 modify 变色)
-    if (this.duration <= 0) {
+    // 1. 瞬时动作 (保持不变)
+    if (!this.duration || this.duration <= 0) {
       if (this.actionName === 'modify') {
         if (this.params.color) targetObj.set('fill', this.params.color);
         if (this.params.opacity !== undefined) targetObj.set('opacity', this.params.opacity);
-        canvasManager.canvas.requestRenderAll();
-        return BTStatus.SUCCESS;
+        if (this.params.text) targetObj.set('text', this.params.text);
+      } else if (this.actionName === 'move') {
+        // 如果 duration 为 0 的瞬间移动（如传送）
+        const newLeft = (targetObj.left || 0) + (this.params.dx || 0);
+        const newTop = (targetObj.top || 0) + (this.params.dy || 0);
+        targetObj.set({ left: newLeft, top: newTop });
       }
+
+      canvasManager.canvas.requestRenderAll();
       return BTStatus.SUCCESS;
     }
 
-    // 2. 持续动作 (如 fade, move 等动画)
+    // 2. 持续动作初始化
     if (!this.startTime) {
       this.startTime = Date.now();
-      // 这里可以记录初始状态，用于插值计算
-      this.startOpacity = targetObj.opacity || 1;
+      this.startState = {
+        opacity: targetObj.get('opacity') ?? 1,
+        left: targetObj.get('left') ?? 0,
+        top: targetObj.get('top') ?? 0,
+        scaleX: targetObj.get('scaleX') ?? 1,
+        scaleY: targetObj.get('scaleY') ?? 1,
+        angle: targetObj.get('angle') ?? 0
+      };
+    }
+
+    // ================= 🌟 缓动核心逻辑 =================
+    const elapsed = Date.now() - this.startTime;
+    const linearProgress = Math.min(elapsed / this.duration, 1); // 真实的线性时间(0到1)
+
+    // 允许指令中指定缓动类型，默认使用最舒服的 'easeOutCubic'
+    const easingType = (this.params && this.params.easing) ? this.params.easing : 'easeOutCubic';
+    const easeFn = utils.easing[easingType] || utils.easing.linear;
+
+    // 得到经过缓动曲线“扭曲”后的动画进度！
+    const progress = easeFn(linearProgress);
+    // ===================================================
+
+    // 执行插值逻辑 (这里完全不用改，直接使用算出来的 progress 即可)
+    switch (this.actionName) {
+      case 'fade': {
+        const targetOpacity = this.params.opacity ?? 1;
+        targetObj.set('opacity', this.startState.opacity + (targetOpacity - this.startState.opacity) * progress);
+        break;
+      }
+      case 'move': {
+        const dx = this.params.dx || 0;
+        const dy = this.params.dy || 0;
+        targetObj.set({
+          left: this.startState.left + dx * progress,
+          top: this.startState.top + dy * progress
+        });
+        break;
+      }
+      case 'scale': {
+        const targetScaleX = this.params.scaleX ?? this.startState.scaleX;
+        const targetScaleY = this.params.scaleY ?? this.startState.scaleY;
+        targetObj.set({
+          scaleX: this.startState.scaleX + (targetScaleX - this.startState.scaleX) * progress,
+          scaleY: this.startState.scaleY + (targetScaleY - this.startState.scaleY) * progress
+        });
+        break;
+      }
+      case 'rotate': {
+        const dAngle = this.params.angle || 0;
+        targetObj.set('angle', this.startState.angle + dAngle * progress);
+        break;
+      }
+      case 'wait':
+        break;
+    }
+
+    if (this.actionName !== 'wait') {
+      canvasManager.canvas.requestRenderAll();
+    }
+
+    // 3. 检查是否结束 (判断结束要用真实的线性时间 linearProgress，不能用 progress)
+    if (linearProgress >= 1) {
+      this.startTime = null;
+      this.startState = null;
+
+      // 为了防止有些像 Elastic 的缓动函数在结尾产生微小误差，
+      // 可以在结束时强制设置一次最终目标值 (可选，这里为代码简洁省略)
+
+      return BTStatus.SUCCESS;
+    }
+
+    return BTStatus.RUNNING;
+  }
+
+  tick_(context) {
+    // console.log("tick action, context:", context)
+    const { canvasManager, targetObj } = context;
+    if (!targetObj) return BTStatus.FAILURE;
+
+    // 1. 瞬时动作 (如 modify 变色, 或 duration <= 0 的情况)
+    if (!this.duration || this.duration <= 0) {
+      if (this.actionName === 'modify') {
+        if (this.params.color) targetObj.set('fill', this.params.color);
+        if (this.params.opacity !== undefined) targetObj.set('opacity', this.params.opacity);
+        if (this.params.text) targetObj.set('text', this.params.text);
+      } else if (this.actionName === 'move') {
+        // 如果 duration 为 0 的瞬间移动（如传送）
+        const newLeft = (targetObj.left || 0) + (this.params.dx || 0);
+        const newTop = (targetObj.top || 0) + (this.params.dy || 0);
+        targetObj.set({ left: newLeft, top: newTop });
+      }
+
+      canvasManager.canvas.requestRenderAll();
+      return BTStatus.SUCCESS;
+    }
+
+    // 2. 持续动作 (如 fade, move, scale, rotate, wait 等动画)
+
+    // 初始化动画状态（仅在动作刚开始的第一帧执行）
+    if (!this.startTime) {
+      this.startTime = Date.now();
+
+      // 🌟 核心改进：统一记录初始状态，作为插值(Interpolation)的起点
+      // 注意：Fabric.js 中坐标通常用 left 和 top
+      this.startState = {
+        opacity: targetObj.get('opacity') ?? 1,
+        left: targetObj.get('left') ?? 0,
+        top: targetObj.get('top') ?? 0,
+        scaleX: targetObj.get('scaleX') ?? 1,
+        scaleY: targetObj.get('scaleY') ?? 1,
+        angle: targetObj.get('angle') ?? 0
+      };
     }
 
     const elapsed = Date.now() - this.startTime;
-    const progress = Math.min(elapsed / this.duration, 1); // 0 到 1 之间
+    // progress 取值 0 到 1，确保不会因为时间超限导致动画越界
+    const progress = Math.min(elapsed / this.duration, 1);
 
-    if (this.actionName === 'fade') {
-      const targetOpacity = this.params.opacity;
-      const currentOpacity = this.startOpacity + (targetOpacity - this.startOpacity) * progress;
-      targetObj.set('opacity', currentOpacity);
+    // 执行插值逻辑
+    switch (this.actionName) {
+      case 'fade': {
+        const targetOpacity = this.params.opacity ?? 1;
+        const currentOpacity = this.startState.opacity + (targetOpacity - this.startState.opacity) * progress;
+        targetObj.set('opacity', currentOpacity);
+        break;
+      }
+
+      case 'move': {
+        // 根据数据集，move 使用的是 dx 和 dy (相对移动)
+        const dx = this.params.dx || 0;
+        const dy = this.params.dy || 0;
+        const currentLeft = this.startState.left + dx * progress;
+        const currentTop = this.startState.top + dy * progress;
+        targetObj.set({ left: currentLeft, top: currentTop });
+        break;
+      }
+
+      case 'scale': {
+        // scale 通常是绝对缩放 (比如放大到 1.5 倍)
+        const targetScaleX = this.params.scaleX ?? this.startState.scaleX;
+        const targetScaleY = this.params.scaleY ?? this.startState.scaleY;
+        const currentScaleX = this.startState.scaleX + (targetScaleX - this.startState.scaleX) * progress;
+        const currentScaleY = this.startState.scaleY + (targetScaleY - this.startState.scaleY) * progress;
+        targetObj.set({ scaleX: currentScaleX, scaleY: currentScaleY });
+        break;
+      }
+
+      case 'rotate': {
+        // 根据数据集，rotate 使用 angle，通常指相对旋转（比如顺时针转 90 度）
+        const dAngle = this.params.angle || 0;
+        const currentAngle = this.startState.angle + dAngle * progress;
+        targetObj.set('angle', currentAngle);
+        break;
+      }
+
+      case 'wait': {
+        // wait 什么都不做，纯粹为了消耗时间
+        break;
+      }
+
+      default:
+        console.warn(`未知的 Action 类型: ${this.actionName}`);
+        break;
+    }
+
+    // 只有非 wait 动作才需要重绘画布，节省性能
+    if (this.actionName !== 'wait') {
       canvasManager.canvas.requestRenderAll();
     }
-    // TODO: 实现 scale, move 的插值逻辑
 
+    // 3. 检查是否结束
     if (progress >= 1) {
-      this.startTime = null; // 动画结束
+      this.startTime = null; // 🌟 极其重要：清理状态，以便这个动作以后（比如在 repeat 节点中）可以被再次触发
+      this.startState = null;
       return BTStatus.SUCCESS;
     }
 
-    return BTStatus.RUNNING; // 动画还在进行，挂起
+    return BTStatus.RUNNING; // 动画还在进行，返回挂起状态让引擎下一帧继续 Tick
   }
 
   reset() {
@@ -219,33 +384,33 @@ export class BTEngine {
   }
 
   // 监听画布事件，将行为树加入活跃队列
- bindTriggers() {
-  const canvas = this.canvasManager.canvas;
+  bindTriggers() {
+    const canvas = this.canvasManager.canvas;
 
-  // 监听全画板的点击事件
-  canvas.on('mouse:down', (e) => {
-    if (!e.target) return;
-    
-    const activeObjId = e.target.id;
-    
-    const objectData = this.canvasManager.objectsData.find(o => o.id === activeObjId);
-    if (!objectData || !objectData.behaviors) return;
+    // 监听全画板的点击事件
+    canvas.on('mouse:down', (e) => {
+      if (!e.target) return;
 
-    // 遍历挂载在这个对象下的所有行为
-    objectData.behaviors.forEach(behaviorConfig => {
-      // 如果这个行为是由 onClick 触发的
-      if (behaviorConfig.trigger === 'onClick') {
-        
-        this.activeTrees.push({
-          id: `${activeObjId}_onClick_${Date.now()}`,
-          rootNode: this.parseNode(behaviorConfig.behaviorTree),
-          context: {
-            canvasManager: this.canvasManager,
-            targetObj: e.target,
-          }
-        });
-      }
+      const activeObjId = e.target.id;
+
+      const objectData = this.canvasManager.objectsData.find(o => o.id === activeObjId);
+      if (!objectData || !objectData.behaviors) return;
+
+      // 遍历挂载在这个对象下的所有行为
+      objectData.behaviors.forEach(behaviorConfig => {
+        // 如果这个行为是由 onClick 触发的
+        if (behaviorConfig.trigger === 'onClick') {
+
+          this.activeTrees.push({
+            id: `${activeObjId}_onClick_${Date.now()}`,
+            rootNode: this.parseNode(behaviorConfig.behaviorTree),
+            context: {
+              canvasManager: this.canvasManager,
+              targetObj: e.target,
+            }
+          });
+        }
+      });
     });
-  });
-} 
+  }
 }

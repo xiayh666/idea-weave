@@ -84,6 +84,25 @@ const utils = {
     return '#3862f6';
   },
 
+  // 常见的缓动函数库 (Easing Functions)
+  easing: {
+    linear: (t) => t,
+
+    // 逐渐加速 (Ease In)
+    easeInQuad: (t) => t * t,
+
+    // 逐渐减速 (Ease Out) - UI 和游戏中移动最常用的丝滑停靠效果
+    easeOutCubic: (t) => (--t) * t * t + 1,
+
+    // 慢-快-慢 (Ease In Out) - 适合放大/缩小
+    easeInOutQuad: (t) => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t,
+
+    // 带有橡皮筋一样的回弹效果 (非常适合做活泼的 UI 动画)
+    easeOutElastic: (t) => {
+      const c4 = (2 * Math.PI) / 3;
+      return t === 0 ? 0 : t === 1 ? 1 : Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * c4) + 1;
+    }
+  },
 
   // 检测两个物体是否碰撞
   isColliding(obj1, obj2) {
