@@ -1,24 +1,24 @@
-const API_BASE_URL = 'http://localhost:8000'; 
+﻿const API_BASE_URL = 'http://localhost:8000';
 
-/**
- * 将自然语言指令发送给后端的 Qwen2.5-1.5B 引擎
- * * @param {string} prompt 用户输入的自然语言指令
- * @param {string|null} currentSelectedId 当前在画布上选中的物体 ID
- * @returns {Promise<Object>} 返回标准的动作对象: { op, data, properties, ids }
- */
+const normalizeAction = (payload) => {
+  if (!payload || typeof payload !== 'object') return null;
+  const opSource = (payload.op || payload.type || payload.command || payload.action || '').toString().toUpperCase();
+  const op = ['CREATE', 'MODIFY', 'UPDATE', 'DELETE'].includes(opSource) ? opSource : 'UNKNOWN';
+  return {
+    ...payload,
+    op,
+  };
+};
+
 export const askAI = async (prompt, currentSelectedId = null) => {
   try {
-    // 1. 组装最极简的请求体
     const requestBody = {
       instruction: prompt,
       context: {
-        selectedId: currentSelectedId // 给后端提供上下文（比如 AI 需要知道用户正在修改谁）
+        selectedId: currentSelectedId
       }
     };
-    console.log(requestBody)
 
-
-    // 2. 发送网络请求给你的后端
     const response = await fetch(`${API_BASE_URL}/generate`, {
       method: 'POST',
       headers: {
@@ -28,29 +28,35 @@ export const askAI = async (prompt, currentSelectedId = null) => {
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      return { success: false, error: `服务返回 ${response.status}` };
     }
 
-    const result = await response.json();
-    console.log(result)
-
-
-    if (result.status !== 'success') {
-      throw new Error('后端 AI 推理失败');
+    const payload = await response.json();
+    if (payload.status !== 'success') {
+      return { success: false, error: payload.message || 'AI 处理返回失败' };
     }
 
-    // 3. 解析清洗 AI 返回的 JSON
-    // 防御性编程：把大模型可能带有的 Markdown 代码块标签 (```json ... ```) 剔除掉
-    let rawJson = result.data;
-    rawJson = rawJson.replace(/```json/g, '').replace(/```/g, '').trim();
-    
-    // 解析成 JavaScript 对象
-    const aiAction = JSON.parse(rawJson);
-    
-    return aiAction;
+    let rawData = payload.data || '';
+    rawData = rawData.replace(/```json/g, '').replace(/```/g, '').trim();
+    if (!rawData) {
+      return { success: false, error: 'AI 没有返回可解析的数据' };
+    }
 
+    let parsed;
+    try {
+      parsed = JSON.parse(rawData);
+    } catch (error) {
+      return { success: false, error: 'AI 返回的 JSON 无法解析' };
+    }
+
+    const action = normalizeAction(parsed);
+    if (!action) {
+      return { success: false, error: 'AI 返回的结构无效' };
+    }
+
+    return { success: true, action };
   } catch (error) {
-    console.error('AI Agent 请求或解析错误:', error);
-    throw error;
+    console.error('AI Agent 请求失败', error);
+    return { success: false, error: error.message || 'AI 请求遇到未知错误' };
   }
 };

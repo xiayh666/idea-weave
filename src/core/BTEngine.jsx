@@ -1,22 +1,20 @@
-import utils from "../utils/utils";
+﻿import utils from "../utils/utils";
 
-// 1. 行为树核心状态枚举
+const clampValue = (value, min, max) => Math.max(min, Math.min(max, value));
+
 export const BTStatus = {
   SUCCESS: 1,
   FAILURE: 2,
   RUNNING: 3,
 };
 
-// 2. 基础节点
 export class BTNode {
   tick(context) {
-    throw new Error("必须在子类中实现 tick 方法");
+    throw new Error("必须在子类重写 tick 方法");
   }
-  // 用于重置节点状态（例如循环执行时）
-  reset() { }
+  reset() {}
 }
 
-// 顺序节点 (Sequence)：按顺序执行，遇到失败则整体失败，全部成功才算成功
 export class SequenceNode extends BTNode {
   constructor(children = []) {
     super();
@@ -27,13 +25,12 @@ export class SequenceNode extends BTNode {
   tick(context) {
     while (this.currentIndex < this.children.length) {
       const status = this.children[this.currentIndex].tick(context);
-
       if (status === BTStatus.RUNNING) return BTStatus.RUNNING;
       if (status === BTStatus.FAILURE) {
         this.reset();
         return BTStatus.FAILURE;
       }
-      this.currentIndex++; // SUCCESS，继续下一个
+      this.currentIndex++;
     }
     this.reset();
     return BTStatus.SUCCESS;
@@ -41,11 +38,10 @@ export class SequenceNode extends BTNode {
 
   reset() {
     this.currentIndex = 0;
-    this.children.forEach(c => c.reset());
+    this.children.forEach(child => child.reset());
   }
 }
 
-// 选择节点 (Selector)：实现 if-else，按顺序尝试，一个成功则整体成功
 export class SelectorNode extends BTNode {
   constructor(children = []) {
     super();
@@ -56,13 +52,12 @@ export class SelectorNode extends BTNode {
   tick(context) {
     while (this.currentIndex < this.children.length) {
       const status = this.children[this.currentIndex].tick(context);
-
       if (status === BTStatus.RUNNING) return BTStatus.RUNNING;
       if (status === BTStatus.SUCCESS) {
         this.reset();
         return BTStatus.SUCCESS;
       }
-      this.currentIndex++; // FAILURE，尝试下一个 Fallback
+      this.currentIndex++;
     }
     this.reset();
     return BTStatus.FAILURE;
@@ -70,46 +65,261 @@ export class SelectorNode extends BTNode {
 
   reset() {
     this.currentIndex = 0;
-    this.children.forEach(c => c.reset());
+    this.children.forEach(child => child.reset());
   }
 }
 
-// ---------------------------------------------------------
-// 【叶子节点】Leaf Nodes
-// ---------------------------------------------------------
+export class ParallelNode extends BTNode {
+  constructor(children = []) {
+    super();
+    this.children = children;
+    this.statuses = new Array(children.length).fill(null);
+  }
 
-// 动作节点 (ActionNode)：执行修改、动画等
+  tick(context) {
+    let anyRunning = false;
+    for (let i = 0; i < this.children.length; i++) {
+      const status = this.children[i].tick(context);
+      this.statuses[i] = status;
+      if (status === BTStatus.FAILURE) {
+        this.reset();
+        return BTStatus.FAILURE;
+      }
+      if (status === BTStatus.RUNNING) anyRunning = true;
+    }
+    if (anyRunning) return BTStatus.RUNNING;
+    this.reset();
+    return BTStatus.SUCCESS;
+  }
+
+  reset() {
+    this.statuses.fill(null);
+    this.children.forEach(child => child.reset());
+  }
+}
+
+export class RepeatNode extends BTNode {
+  constructor(child, count = 1, delay = 0) {
+    super();
+    this.child = child;
+    this.count = count;
+    this.delay = delay;
+    this.completed = 0;
+    this.waitUntil = 0;
+  }
+
+  tick(context) {
+    if (!this.child) return BTStatus.FAILURE;
+    if (this.count !== Infinity && this.completed >= this.count) {
+      this.reset();
+      return BTStatus.SUCCESS;
+    }
+    if (this.delay > 0 && Date.now() < this.waitUntil) {
+      return BTStatus.RUNNING;
+    }
+    const status = this.child.tick(context);
+    if (status === BTStatus.RUNNING) return BTStatus.RUNNING;
+    if (status === BTStatus.FAILURE) {
+      this.reset();
+      return BTStatus.FAILURE;
+    }
+    this.completed += 1;
+    this.child.reset();
+    this.waitUntil = this.delay > 0 ? Date.now() + this.delay : 0;
+    if (this.count === Infinity) {
+      return BTStatus.RUNNING;
+    }
+    if (this.completed >= this.count) {
+      this.reset();
+      return BTStatus.SUCCESS;
+    }
+    return BTStatus.RUNNING;
+  }
+
+  reset() {
+    this.completed = 0;
+    this.waitUntil = 0;
+    if (this.child) this.child.reset();
+  }
+}
+
+export class ForeachNode extends BTNode {
+  constructor(child, items = [], delay = 0) {
+    super();
+    this.child = child;
+    this.items = items;
+    this.currentIndex = 0;
+    this.delay = delay;
+    this.waitUntil = 0;
+  }
+
+  tick(context) {
+    if (!this.child) return BTStatus.FAILURE;
+    if (this.currentIndex >= this.items.length) {
+      this.reset();
+      return BTStatus.SUCCESS;
+    }
+    if (this.delay > 0 && Date.now() < this.waitUntil) {
+      return BTStatus.RUNNING;
+    }
+    const targetId = this.items[this.currentIndex];
+    const canvas = context.canvasManager.canvas;
+    const iterationTarget = canvas?.getObjects().find(o => o.id === targetId);
+    const childContext = {
+      ...context,
+      targetObj: iterationTarget || context.targetObj,
+      iterationTargetId: targetId
+    };
+    const status = this.child.tick(childContext);
+    if (status === BTStatus.RUNNING) return BTStatus.RUNNING;
+    if (status === BTStatus.FAILURE) {
+      this.reset();
+      return BTStatus.FAILURE;
+    }
+    this.currentIndex += 1;
+    this.child.reset();
+    this.waitUntil = this.delay > 0 ? Date.now() + this.delay : 0;
+    if (this.currentIndex >= this.items.length) {
+      this.reset();
+      return BTStatus.SUCCESS;
+    }
+    return BTStatus.RUNNING;
+  }
+
+  reset() {
+    this.currentIndex = 0;
+    this.waitUntil = 0;
+    if (this.child) this.child.reset();
+  }
+}
+
 export class ActionNode extends BTNode {
   constructor(actionName, params, duration = 0) {
     super();
     this.actionName = actionName;
-    this.params = params;
+    this.params = params || {};
     this.duration = duration;
     this.startTime = null;
   }
 
-  tick(context) {
-    const { canvasManager, targetObj } = context;
-    if (!targetObj) return BTStatus.FAILURE;
-
-    // 1. 瞬时动作 (保持不变)
-    if (!this.duration || this.duration <= 0) {
-      if (this.actionName === 'modify') {
-        if (this.params.color) targetObj.set('fill', this.params.color);
-        if (this.params.opacity !== undefined) targetObj.set('opacity', this.params.opacity);
-        if (this.params.text) targetObj.set('text', this.params.text);
-      } else if (this.actionName === 'move') {
-        // 如果 duration 为 0 的瞬间移动（如传送）
-        const newLeft = (targetObj.left || 0) + (this.params.dx || 0);
-        const newTop = (targetObj.top || 0) + (this.params.dy || 0);
-        targetObj.set({ left: newLeft, top: newTop });
+  static syncObjectState(canvasManager, targetObj, { includeScale = false } = {}) {
+    if (!canvasManager?.onModify || !targetObj?.id) return;
+    const getValue = (prop) => {
+      if (typeof targetObj.get === 'function') {
+        return targetObj.get(prop);
       }
+      return targetObj[prop];
+    };
 
-      canvasManager.canvas.requestRenderAll();
-      return BTStatus.SUCCESS;
+    const payload = {};
+    const left = getValue('left');
+    const top = getValue('top');
+    const angle = getValue('angle');
+    const fill = getValue('fill');
+    const opacity = getValue('opacity');
+    if (typeof left === 'number') payload.x = left;
+    if (typeof top === 'number') payload.y = top;
+    if (typeof angle === 'number') payload.angle = angle;
+    if (typeof fill === 'string') payload.fillColor = fill;
+    if (typeof opacity === 'number') payload.opacity = opacity;
+    if (includeScale) {
+      const scaleX = getValue('scaleX');
+      const scaleY = getValue('scaleY');
+      if (typeof scaleX === 'number') payload.scaleX = scaleX;
+      if (typeof scaleY === 'number') payload.scaleY = scaleY;
     }
 
-    // 2. 持续动作初始化
+    if (Object.keys(payload).length === 0) return;
+    canvasManager.onModify(targetObj.id, payload);
+  }
+
+  resolveTarget(context) {
+    const canvas = context.canvasManager.canvas;
+    const explicitId = this.params.targetId || context.iterationTargetId || context.behaviorTargetId;
+    if (explicitId) {
+      const explicitObj = canvas?.getObjects().find(o => o.id === explicitId);
+      if (explicitObj) return explicitObj;
+    }
+    if (context.targetObj) return context.targetObj;
+    return null;
+  }
+
+  tick(context) {
+    const { canvasManager } = context;
+    const targetObj = this.resolveTarget(context);
+    if (!targetObj) return BTStatus.FAILURE;
+    if (!this.duration || this.duration <= 0) {
+      switch (this.actionName) {
+        case 'modify':
+          if (this.params.color) targetObj.set('fill', this.params.color);
+          if (this.params.opacity !== undefined) targetObj.set('opacity', this.params.opacity);
+          if (this.params.text) targetObj.set('text', this.params.text);
+          break;
+        case 'move':
+          if (this.params.moveTo) {
+            targetObj.set({ left: this.params.moveTo.x, top: this.params.moveTo.y });
+          } else {
+            const newLeft = (targetObj.left || 0) + (this.params.dx || 0);
+            const newTop = (targetObj.top || 0) + (this.params.dy || 0);
+            targetObj.set({ left: newLeft, top: newTop });
+          }
+          break;
+        case 'scale':
+          targetObj.set({ scaleX: this.params.scaleX ?? targetObj.scaleX ?? 1, scaleY: this.params.scaleY ?? targetObj.scaleY ?? 1 });
+          break;
+        case 'rotate':
+          targetObj.set('angle', this.params.angle ?? targetObj.angle ?? 0);
+          break;
+        case 'launch': {
+          const canvas = canvasManager.canvas;
+          const stageWidth = (canvas?.getWidth?.() ?? canvas?.width) ?? 800;
+          const stageHeight = (canvas?.getHeight?.() ?? canvas?.height) ?? 600;
+          const emitterObj = context.iterationTargetId ? canvas?.getObjects().find(o => o.id === context.iterationTargetId) : targetObj;
+          const target = targetObj || emitterObj;
+          if (!target) return BTStatus.FAILURE;
+          target.setCoords();
+          const dx = this.params.dx ?? this.params.forceX ?? 0;
+          const dy = this.params.dy ?? this.params.forceY ?? -220;
+          const targetLeft = (target.left ?? 0) + dx;
+          const targetTop = (target.top ?? 0) + dy;
+          const targetWidth = (target.width ?? 0) * (target.scaleX ?? 1);
+          const targetHeight = (target.height ?? 0) * (target.scaleY ?? 1);
+          const finalLeft = clampValue(targetLeft, 0, Math.max(0, stageWidth - targetWidth));
+          const finalTop = clampValue(targetTop, 0, Math.max(0, stageHeight - targetHeight));
+          const duration = Math.max(50, this.params.duration ?? 500);
+          const spinAmt = this.params.spin ?? 0;
+          const animations = [
+            canvasManager.animateObject(target.id, 'left', finalLeft, duration),
+            canvasManager.animateObject(target.id, 'top', finalTop, duration)
+          ];
+          if (this.params.addSpin) {
+            animations.push(canvasManager.animateObject(target.id, 'angle', (target.angle ?? 0) + spinAmt, duration));
+          }
+          Promise.all(animations).catch(() => {});
+          return BTStatus.SUCCESS;
+        }
+        case 'colorInside': {
+          const emitterObj = targetObj;
+          emitterObj?.setCoords();
+          const canvas = canvasManager.canvas;
+          const color = this.params.color || '#dc2626';
+          const allowIds = Array.isArray(this.params.targetIds) ? new Set(this.params.targetIds) : null;
+          canvas?.getObjects().forEach(obj => {
+            if (!obj || obj.id === emitterObj.id || (allowIds && !allowIds.has(obj.id))) return;
+            obj.setCoords();
+            if (emitterObj.intersectsWithObject(obj)) {
+              canvasManager.modifyObject(obj.id, { fillColor: color });
+            }
+          });
+          return BTStatus.SUCCESS;
+        }
+        default:
+          break;
+      }
+      canvasManager.canvas.requestRenderAll();
+      ActionNode.syncObjectState(canvasManager, targetObj, { includeScale: this.actionName === 'scale' });
+      return BTStatus.SUCCESS;
+    }
     if (!this.startTime) {
       this.startTime = Date.now();
       this.startState = {
@@ -121,20 +331,11 @@ export class ActionNode extends BTNode {
         angle: targetObj.get('angle') ?? 0
       };
     }
-
-    // ================= 🌟 缓动核心逻辑 =================
     const elapsed = Date.now() - this.startTime;
-    const linearProgress = Math.min(elapsed / this.duration, 1); // 真实的线性时间(0到1)
-
-    // 允许指令中指定缓动类型，默认使用最舒服的 'easeOutCubic'
+    const linearProgress = Math.min(elapsed / this.duration, 1);
     const easingType = (this.params && this.params.easing) ? this.params.easing : 'easeOutCubic';
     const easeFn = utils.easing[easingType] || utils.easing.linear;
-
-    // 得到经过缓动曲线“扭曲”后的动画进度！
     const progress = easeFn(linearProgress);
-    // ===================================================
-
-    // 执行插值逻辑 (这里完全不用改，直接使用算出来的 progress 即可)
     switch (this.actionName) {
       case 'fade': {
         const targetOpacity = this.params.opacity ?? 1;
@@ -142,12 +343,16 @@ export class ActionNode extends BTNode {
         break;
       }
       case 'move': {
-        const dx = this.params.dx || 0;
-        const dy = this.params.dy || 0;
-        targetObj.set({
-          left: this.startState.left + dx * progress,
-          top: this.startState.top + dy * progress
-        });
+        if (this.params.moveTo) {
+          targetObj.set({
+            left: this.startState.left + (this.params.moveTo.x - this.startState.left) * progress,
+            top: this.startState.top + (this.params.moveTo.y - this.startState.top) * progress
+          });
+        } else {
+          const dx = this.params.dx || 0;
+          const dy = this.params.dy || 0;
+          targetObj.set({ left: this.startState.left + dx * progress, top: this.startState.top + dy * progress });
+        }
         break;
       }
       case 'scale': {
@@ -166,130 +371,19 @@ export class ActionNode extends BTNode {
       }
       case 'wait':
         break;
+      default:
+        break;
     }
-
     if (this.actionName !== 'wait') {
       canvasManager.canvas.requestRenderAll();
     }
-
-    // 3. 检查是否结束 (判断结束要用真实的线性时间 linearProgress，不能用 progress)
     if (linearProgress >= 1) {
       this.startTime = null;
       this.startState = null;
-
-      // 为了防止有些像 Elastic 的缓动函数在结尾产生微小误差，
-      // 可以在结束时强制设置一次最终目标值 (可选，这里为代码简洁省略)
-
+      ActionNode.syncObjectState(canvasManager, targetObj, { includeScale: this.actionName === 'scale' });
       return BTStatus.SUCCESS;
     }
-
     return BTStatus.RUNNING;
-  }
-
-  tick_(context) {
-    // console.log("tick action, context:", context)
-    const { canvasManager, targetObj } = context;
-    if (!targetObj) return BTStatus.FAILURE;
-
-    // 1. 瞬时动作 (如 modify 变色, 或 duration <= 0 的情况)
-    if (!this.duration || this.duration <= 0) {
-      if (this.actionName === 'modify') {
-        if (this.params.color) targetObj.set('fill', this.params.color);
-        if (this.params.opacity !== undefined) targetObj.set('opacity', this.params.opacity);
-        if (this.params.text) targetObj.set('text', this.params.text);
-      } else if (this.actionName === 'move') {
-        // 如果 duration 为 0 的瞬间移动（如传送）
-        const newLeft = (targetObj.left || 0) + (this.params.dx || 0);
-        const newTop = (targetObj.top || 0) + (this.params.dy || 0);
-        targetObj.set({ left: newLeft, top: newTop });
-      }
-
-      canvasManager.canvas.requestRenderAll();
-      return BTStatus.SUCCESS;
-    }
-
-    // 2. 持续动作 (如 fade, move, scale, rotate, wait 等动画)
-
-    // 初始化动画状态（仅在动作刚开始的第一帧执行）
-    if (!this.startTime) {
-      this.startTime = Date.now();
-
-      // 🌟 核心改进：统一记录初始状态，作为插值(Interpolation)的起点
-      // 注意：Fabric.js 中坐标通常用 left 和 top
-      this.startState = {
-        opacity: targetObj.get('opacity') ?? 1,
-        left: targetObj.get('left') ?? 0,
-        top: targetObj.get('top') ?? 0,
-        scaleX: targetObj.get('scaleX') ?? 1,
-        scaleY: targetObj.get('scaleY') ?? 1,
-        angle: targetObj.get('angle') ?? 0
-      };
-    }
-
-    const elapsed = Date.now() - this.startTime;
-    // progress 取值 0 到 1，确保不会因为时间超限导致动画越界
-    const progress = Math.min(elapsed / this.duration, 1);
-
-    // 执行插值逻辑
-    switch (this.actionName) {
-      case 'fade': {
-        const targetOpacity = this.params.opacity ?? 1;
-        const currentOpacity = this.startState.opacity + (targetOpacity - this.startState.opacity) * progress;
-        targetObj.set('opacity', currentOpacity);
-        break;
-      }
-
-      case 'move': {
-        // 根据数据集，move 使用的是 dx 和 dy (相对移动)
-        const dx = this.params.dx || 0;
-        const dy = this.params.dy || 0;
-        const currentLeft = this.startState.left + dx * progress;
-        const currentTop = this.startState.top + dy * progress;
-        targetObj.set({ left: currentLeft, top: currentTop });
-        break;
-      }
-
-      case 'scale': {
-        // scale 通常是绝对缩放 (比如放大到 1.5 倍)
-        const targetScaleX = this.params.scaleX ?? this.startState.scaleX;
-        const targetScaleY = this.params.scaleY ?? this.startState.scaleY;
-        const currentScaleX = this.startState.scaleX + (targetScaleX - this.startState.scaleX) * progress;
-        const currentScaleY = this.startState.scaleY + (targetScaleY - this.startState.scaleY) * progress;
-        targetObj.set({ scaleX: currentScaleX, scaleY: currentScaleY });
-        break;
-      }
-
-      case 'rotate': {
-        // 根据数据集，rotate 使用 angle，通常指相对旋转（比如顺时针转 90 度）
-        const dAngle = this.params.angle || 0;
-        const currentAngle = this.startState.angle + dAngle * progress;
-        targetObj.set('angle', currentAngle);
-        break;
-      }
-
-      case 'wait': {
-        // wait 什么都不做，纯粹为了消耗时间
-        break;
-      }
-
-      default:
-        console.warn(`未知的 Action 类型: ${this.actionName}`);
-        break;
-    }
-
-    // 只有非 wait 动作才需要重绘画布，节省性能
-    if (this.actionName !== 'wait') {
-      canvasManager.canvas.requestRenderAll();
-    }
-
-    // 3. 检查是否结束
-    if (progress >= 1) {
-      this.startTime = null; // 🌟 极其重要：清理状态，以便这个动作以后（比如在 repeat 节点中）可以被再次触发
-      this.startState = null;
-      return BTStatus.SUCCESS;
-    }
-
-    return BTStatus.RUNNING; // 动画还在进行，返回挂起状态让引擎下一帧继续 Tick
   }
 
   reset() {
@@ -297,65 +391,230 @@ export class ActionNode extends BTNode {
   }
 }
 
-// 条件节点 (ConditionNode)：判断碰撞等
+export class InsideNode extends BTNode {
+  constructor(child, params = {}) {
+    super();
+    this.child = child;
+    this.params = params;
+    this.targets = [];
+    this.currentIndex = 0;
+  }
+
+  gatherTargets(context) {
+    const canvas = context.canvasManager.canvas;
+    const emitter = context.targetObj;
+    if (!canvas || !emitter) return [];
+    emitter.setCoords();
+    const filterIds = Array.isArray(this.params.targetIds) ? new Set(this.params.targetIds) : null;
+    return (canvas.getObjects() || [])
+      .filter(obj => obj && obj.id && obj.id !== emitter.id && (!filterIds || filterIds.has(obj.id)))
+      .filter(obj => {
+        obj.setCoords();
+        return emitter.intersectsWithObject(obj);
+      })
+      .map(obj => obj.id);
+  }
+
+  tick(context) {
+    if (!this.child) {
+      return BTStatus.SUCCESS;
+    }
+    if (this.targets.length === 0) {
+      this.targets = this.gatherTargets(context);
+    }
+    if (this.targets.length === 0) {
+      return BTStatus.FAILURE;
+    }
+    const canvas = context.canvasManager.canvas;
+    while (this.currentIndex < this.targets.length) {
+      const targetId = this.targets[this.currentIndex];
+      const targetObj = canvas?.getObjects().find(o => o.id === targetId);
+      const childContext = {
+        ...context,
+        targetObj,
+        iterationTargetId: targetId
+      };
+      const status = this.child.tick(childContext);
+      if (status === BTStatus.RUNNING) return BTStatus.RUNNING;
+      if (status === BTStatus.FAILURE) {
+        this.reset();
+        return BTStatus.FAILURE;
+      }
+      this.currentIndex++;
+    }
+    this.reset();
+    return BTStatus.SUCCESS;
+  }
+
+  reset() {
+    this.targets = [];
+    this.currentIndex = 0;
+    this.child?.reset();
+  }
+}
+
 export class ConditionNode extends BTNode {
   constructor(conditionName, params) {
     super();
     this.conditionName = conditionName;
-    this.params = params;
+    this.params = params || {};
   }
 
   tick(context) {
     const { canvasManager, targetObj } = context;
-
-    if (this.conditionName === 'isColliding') {
-      const targetB = canvasManager.canvas.getObjects().find(o => o.id === this.params.target);
-      if (!targetB || !targetObj) return BTStatus.FAILURE;
-
-      // 使用 Fabric.js 内置的碰撞检测算法
-      const isHit = targetObj.intersectsWithObject(targetB);
-      return isHit ? BTStatus.SUCCESS : BTStatus.FAILURE;
+    switch (this.conditionName) {
+      case 'isColliding': {
+        const targetB = canvasManager.canvas.getObjects().find(o => o.id === this.params.targetId);
+        if (!targetB || !targetObj) return BTStatus.FAILURE;
+        return targetObj.intersectsWithObject(targetB) ? BTStatus.SUCCESS : BTStatus.FAILURE;
+      }
+      case 'isSelected': {
+        if (!targetObj) return BTStatus.FAILURE;
+        return targetObj === canvasManager.canvas.getActiveObject() ? BTStatus.SUCCESS : BTStatus.FAILURE;
+      }
+      case 'equals': {
+        const actual = context[this.params.source] ?? '';
+        return actual === this.params.value ? BTStatus.SUCCESS : BTStatus.FAILURE;
+      }
+      default:
+        return BTStatus.FAILURE;
     }
-
-    return BTStatus.FAILURE;
   }
 }
-
-
 
 export class BTEngine {
   constructor(canvasManager) {
     this.canvasManager = canvasManager;
-    this.activeTrees = []; // 当前正在运行的行为树实例
+    this.activeTrees = [];
     this.isRunning = false;
+    this.draggingObjects = new Set();
+    this.timerHandles = new Map();
 
-    // 绑定原生事件以触发行为树
+    if (this.canvasManager.registerBehaviorSyncListener) {
+      this.canvasManager.registerBehaviorSyncListener(this.handleBehaviorSync.bind(this));
+    }
+
     this.bindTriggers();
   }
 
-  // JSON 节点解析为行为树的节点
+  handleBehaviorSync(objects) {
+    this.ensureTimerBehaviors(objects);
+  }
+
+  ensureTimerBehaviors(objects = this.canvasManager.objectsData || []) {
+    const activeKeys = new Set();
+    objects.forEach(obj => {
+      (obj.behaviors || []).forEach(behavior => {
+        if (behavior.trigger === 'onTimer') {
+          const key = this.getBehaviorKey(obj.id, behavior);
+          activeKeys.add(key);
+          if (!this.timerHandles.has(key)) {
+            this.startTimerForBehavior(obj, behavior, key);
+          }
+        }
+      });
+    });
+    for (const key of Array.from(this.timerHandles.keys())) {
+      if (!activeKeys.has(key)) {
+        clearInterval(this.timerHandles.get(key));
+        this.timerHandles.delete(key);
+      }
+    }
+  }
+
+  startTimerForBehavior(objectData, behavior, key) {
+    const interval = Math.max(100, behavior.triggerParams?.interval || behavior.interval || 1000);
+    const handle = setInterval(() => {
+      const freshObject = this.canvasManager.objectsData.find(o => o.id === objectData.id);
+      if (!freshObject) return;
+      this.activateBehavior(freshObject, behavior, { trigger: 'onTimer', timerInterval: interval });
+    }, interval);
+    this.timerHandles.set(key, handle);
+  }
+
+  cleanupTimersForObject(objectId) {
+    if (!objectId) return;
+    for (const key of Array.from(this.timerHandles.keys())) {
+      if (key.startsWith(`${objectId}_`)) {
+        clearInterval(this.timerHandles.get(key));
+        this.timerHandles.delete(key);
+      }
+    }
+  }
+
+  getBehaviorKey(objectId, behavior) {
+    const behaviorId = behavior.id || behavior.name || Math.random().toString(36).slice(2, 8);
+    return `${objectId}_${behavior.trigger || 'trigger'}_${behaviorId}`;
+  }
+
+  activateBehavior(objectData, behaviorConfig, triggerMeta = {}) {
+    if (!behaviorConfig || !behaviorConfig.behaviorTree) return;
+    const rootNode = this.parseNode(behaviorConfig.behaviorTree);
+    if (!rootNode) return;
+    const targetFabric = this.canvasManager.canvas?.getObjects().find(o => o.id === objectData.id);
+    this.activeTrees.push({
+      id: `${objectData.id}_${behaviorConfig.trigger}_${Date.now()}`,
+      rootNode,
+      context: {
+        canvasManager: this.canvasManager,
+        targetObj: targetFabric,
+        behaviorTargetId: objectData.id,
+        behaviorMeta: triggerMeta
+      }
+    });
+  }
+
+  handleTriggerEvent(triggerName, event) {
+    const target = event?.target;
+    if (!target || !target.id) return;
+    const objectData = this.canvasManager.objectsData.find(o => o.id === target.id);
+    if (!objectData || !objectData.behaviors) return;
+    objectData.behaviors.forEach(behavior => {
+      if (behavior.trigger === triggerName) {
+        this.activateBehavior(objectData, behavior, { trigger: triggerName, event });
+      }
+    });
+  }
+
   parseNode(jsonNode) {
     if (!jsonNode) return null;
-
     switch (jsonNode.node) {
       case 'sequence':
-        return new SequenceNode(jsonNode.children.map(c => this.parseNode(c)));
+        return new SequenceNode((jsonNode.children || []).map(c => this.parseNode(c)).filter(Boolean));
       case 'selector':
-        return new SelectorNode(jsonNode.children.map(c => this.parseNode(c)));
+        return new SelectorNode((jsonNode.children || []).map(c => this.parseNode(c)).filter(Boolean));
+      case 'parallel':
+        return new ParallelNode((jsonNode.children || []).map(c => this.parseNode(c)).filter(Boolean));
+      case 'repeat': {
+        const child = jsonNode.child ? this.parseNode(jsonNode.child) : this.parseNode((jsonNode.children || [])[0]);
+        const count = jsonNode.params?.count ?? jsonNode.count ?? 1;
+        const delay = jsonNode.params?.delay || 0;
+        return new RepeatNode(child, count, delay);
+      }
+      case 'foreach': {
+        const child = jsonNode.child ? this.parseNode(jsonNode.child) : this.parseNode((jsonNode.children || [])[0]);
+        const items = jsonNode.params?.targetIds || jsonNode.params?.items || [];
+        const delay = jsonNode.params?.delay || 0;
+        return new ForeachNode(child, items, delay);
+      }
+      case 'inside': {
+        const child = jsonNode.child ? this.parseNode(jsonNode.child) : this.parseNode((jsonNode.children || [])[0]);
+        return new InsideNode(child, jsonNode.params);
+      }
       case 'action':
         return new ActionNode(jsonNode.name, jsonNode.params, jsonNode.duration);
       case 'condition':
         return new ConditionNode(jsonNode.name, jsonNode.params);
       default:
-        console.warn("未知节点类型:", jsonNode.node);
-        return new BTNode(); // 空节点防止报错
+        console.warn("未知的行为树节点类型", jsonNode.node);
+        return null;
     }
   }
 
-  // 启动引擎的 Tick 循环
   start() {
     if (this.isRunning) return;
     this.isRunning = true;
+    this.ensureTimerBehaviors();
     const loop = () => {
       this.tickAll();
       if (this.isRunning) {
@@ -367,50 +626,43 @@ export class BTEngine {
 
   stop() {
     this.isRunning = false;
+    this.timerHandles.forEach(handle => clearInterval(handle));
+    this.timerHandles.clear();
   }
 
-  // 每帧遍历执行所有活跃的树
   tickAll() {
-    // 倒序遍历，方便在执行结束时安全移除树
     for (let i = this.activeTrees.length - 1; i >= 0; i--) {
       const treeInstance = this.activeTrees[i];
       const status = treeInstance.rootNode.tick(treeInstance.context);
-
-      // 如果树返回了 SUCCESS 或 FAILURE，说明这棵树的生命周期结束了，将其移除
       if (status !== BTStatus.RUNNING) {
         this.activeTrees.splice(i, 1);
       }
     }
   }
 
-  // 监听画布事件，将行为树加入活跃队列
   bindTriggers() {
     const canvas = this.canvasManager.canvas;
-
-    // 监听全画板的点击事件
-    canvas.on('mouse:down', (e) => {
-      if (!e.target) return;
-
-      const activeObjId = e.target.id;
-
-      const objectData = this.canvasManager.objectsData.find(o => o.id === activeObjId);
-      if (!objectData || !objectData.behaviors) return;
-
-      // 遍历挂载在这个对象下的所有行为
-      objectData.behaviors.forEach(behaviorConfig => {
-        // 如果这个行为是由 onClick 触发的
-        if (behaviorConfig.trigger === 'onClick') {
-
-          this.activeTrees.push({
-            id: `${activeObjId}_onClick_${Date.now()}`,
-            rootNode: this.parseNode(behaviorConfig.behaviorTree),
-            context: {
-              canvasManager: this.canvasManager,
-              targetObj: e.target,
-            }
-          });
-        }
-      });
+    canvas.on('mouse:down', (e) => this.handleTriggerEvent('onClick', e));
+    canvas.on('mouse:over', (e) => this.handleTriggerEvent('onHover', e));
+    canvas.on('mouse:out', (e) => this.handleTriggerEvent('onHoverOut', e));
+    canvas.on('object:moving', (e) => {
+      const target = e.target;
+      if (!target || !target.id) return;
+      if (this.draggingObjects.has(target.id)) return;
+      this.draggingObjects.add(target.id);
+      this.handleTriggerEvent('onDrag', e);
+    });
+    canvas.on('mouse:up', (e) => {
+      if (e?.target?.id) {
+        this.draggingObjects.delete(e.target.id);
+      } else {
+        this.draggingObjects.clear();
+      }
+    });
+    canvas.on('object:removed', (e) => {
+      if (e?.target?.id) {
+        this.cleanupTimersForObject(e.target.id);
+      }
     });
   }
 }

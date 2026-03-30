@@ -56,6 +56,56 @@ const INITIAL_OBJECTS = [
         createdBy: 'system'
       }
     ] 
+  },
+  {
+    id: 'obj-3',
+    name: '互动方块',
+    type: 'rect',
+    x: 320,
+    y: 220,
+    width: 110,
+    height: 110,
+    fillColor: '#10b981',
+    borderRadius: 12,
+    behaviors: [
+      {
+        id: 'bh-3',
+        trigger: 'onClick',
+        behaviorTree: {
+          node: 'sequence',
+          children: [
+            {
+              node: 'action',
+              name: 'scale',
+              params: { scaleX: 1.25, scaleY: 1.25 },
+              duration: 400
+            },
+            {
+              node: 'action',
+              name: 'wait',
+              params: { duration: 300 }
+            },
+            {
+              node: 'action',
+              name: 'scale',
+              params: { scaleX: 1.0, scaleY: 1.0 },
+              duration: 300
+            }
+          ]
+        }
+      },
+      {
+        id: 'bh-4',
+        trigger: 'onDrag',
+        behaviorTree: {
+          node: 'action',
+          name: 'modify',
+          params: {
+            color: '#ef4444'
+          }
+        }
+      }
+    ]
   }
 ];
 

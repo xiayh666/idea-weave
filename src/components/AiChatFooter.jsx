@@ -8,8 +8,34 @@ import {
   View
 } from 'react-native';
 
-export const AiChatFooter = ({ input, setInput, handleAICommand }) => {
+export const AiChatFooter = ({ input, setInput, handleAICommand, statusMessage, loading, history = [] }) => {
   const isMobile = Platform.OS !== 'web';
+
+  const statusText = loading ? 'AI 正在处理中…' : statusMessage;
+  const recentHistory = history?.slice().reverse().slice(0, 3) || [];
+
+  const renderStatusBlock = () => {
+    if (!statusText && recentHistory.length === 0) return null;
+    return (
+      <>
+        {statusText && (
+          <View style={styles.aiStatusRow}>
+            <Text style={styles.aiStatusText}>{statusText}</Text>
+          </View>
+        )}
+        {recentHistory.length > 0 && (
+          <View style={styles.aiHistoryWrapper}>
+            {recentHistory.map((entry) => (
+              <Text key={`${entry.timestamp}-${entry.status ?? entry.op}`} style={styles.aiHistoryText}>
+                {entry.op ? `${entry.op} · ` : ''}
+                {entry.message || entry.status || 'AI 交互记录'}
+              </Text>
+            ))}
+          </View>
+        )}
+      </>
+    );
+  };
 
   const handleKeyDown = (e) => {
     if (Platform.OS === 'web' && e.key === 'Enter' && !e.shiftKey) {
@@ -20,6 +46,7 @@ export const AiChatFooter = ({ input, setInput, handleAICommand }) => {
 
   return (
     <View style={[styles.footer, isMobile && styles.mobileFooter]}>
+      {renderStatusBlock()}
       {isMobile ? (
         <View style={styles.mobileContentContainer}>
           <View style={styles.mobileLeftSection}>
@@ -242,5 +269,24 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: 24,
     backgroundColor: '#3b82f6',
+  },
+  aiStatusRow: {
+    marginBottom: 6,
+    paddingHorizontal: 6,
+  },
+  aiStatusText: {
+    fontSize: 12,
+    color: '#2563eb',
+    fontWeight: '600',
+  },
+  aiHistoryWrapper: {
+    backgroundColor: '#f1f5f9',
+    padding: 6,
+    borderRadius: 10,
+    marginBottom: 6,
+  },
+  aiHistoryText: {
+    fontSize: 11,
+    color: '#475569',
   },
 });

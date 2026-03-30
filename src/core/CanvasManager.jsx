@@ -13,12 +13,14 @@ export class CanvasManager {
     this.mode = 'edit';
     this.currentTool = 'select'; // 保留工具状态
     this.objectsData = [];
+    this.behaviorEngine = null;
 
     // 3. 向上层 (React) 汇报的回调函数
     this.onSelect = options.onSelect || (() => { });
     this.onModify = options.onModify || (() => { });
     this.onAdd = options.onAdd || (() => { });
     this.onDelete = options.onDelete || (() => { });
+    this.behaviorSyncListener = null;
 
     // (已删除：collisionEnabled 和 collisionHandlers)
 
@@ -32,6 +34,9 @@ export class CanvasManager {
 
   syncState(objects, mode) {
     this.objectsData = objects;
+    if (this.behaviorSyncListener) {
+      this.behaviorSyncListener(objects);
+    }
 
     // 如果模式发生了切换，更新画布上所有物体的交互状态
     if (this.mode !== mode) {
@@ -59,11 +64,15 @@ export class CanvasManager {
     // 2. 更新/新增阶段
     this.objectsData.forEach((objData) => {
       let fObj = currentCanvasObjects.find(o => o.id === objData.id);
+      const scaleX = objData.scaleX ?? 1;
+      const scaleY = objData.scaleY ?? objData.scaleX ?? 1;
 
       const commonProps = {
         left: objData.x,
         top: objData.y,
         fill: objData.fillColor || 'transparent',
+        scaleX,
+        scaleY,
         // selectable: isEditable && (this.currentTool === 'select' || this.currentTool === 'erase'),
         selectable: true,
         hoverCursor: isEditable && this.currentTool === 'select' ? 'move' : 'default',
@@ -81,17 +90,20 @@ export class CanvasManager {
           fObj.set({
             width: objData.width, height: objData.height,
             rx: objData.borderRadius || 0, ry: objData.borderRadius || 0,
-            scaleX: 1, scaleY: 1
+            scaleX,
+            scaleY
           });
         } else if (objData.type === 'circle') {
           fObj.set({
             radius: (objData.width || 100) / 2,
-            scaleX: 1, scaleY: 1
+            scaleX,
+            scaleY
           });
         } else if (objData.type === 'text') {
           fObj.set({
             text: objData.text || '', fontSize: objData.fontSize || 20,
-            scaleX: 1, scaleY: 1
+            scaleX,
+            scaleY
           });
         }
         // path 的更新不需要额外处理专属属性，commonProps 足够
@@ -125,6 +137,14 @@ export class CanvasManager {
     });
 
     this.canvas.renderAll();
+  }
+
+  registerBehaviorSyncListener(listener) {
+    this.behaviorSyncListener = listener;
+  }
+
+  setBehaviorEngine(engine) {
+    this.behaviorEngine = engine;
   }
 
   // ==========================================
@@ -224,13 +244,25 @@ export class CanvasManager {
     this.canvas.on('object:modified', (e) => {
       const target = e.target;
       if (!target || !target.id) return;
-      this.onModify(target.id, {
+      const action = typeof e?.transform?.action === 'string'
+        ? e.transform.action.toLowerCase()
+        : null;
+      const isUserScale = action?.includes('scale') && !!e?.transform?.corner;
+
+      const payload = {
         x: target.left,
         y: target.top,
-        width: target.width * target.scaleX,
-        height: target.height * target.scaleY,
         angle: target.angle || 0
-      });
+      };
+
+      if (isUserScale) {
+        payload.width = target.width;
+        payload.height = target.height;
+        payload.scaleX = target.scaleX;
+        payload.scaleY = target.scaleY;
+      }
+
+      this.onModify(target.id, payload);
     });
 
     // 处理画笔绘制结束

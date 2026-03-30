@@ -15,6 +15,21 @@ export class CanvasManagerNative {
     this.onModify = options.onModify || (() => {});
     this.onAdd = options.onAdd || (() => {});
     this.onDelete = options.onDelete || (() => {});
+    this.behaviorSyncListener = null;
+    this.behaviorEngine = null;
+    this.canvasObjects = new Map();
+    this.canvas = {
+      getObjects: () => this.getFabricObjects(),
+      requestRenderAll: () => {},
+      on: () => {},
+      off: () => {},
+      getActiveObject: () => null,
+      discardActiveObject: () => {},
+      remove: () => {},
+      isDrawingMode: false,
+      selection: false,
+      defaultCursor: 'default',
+    };
   }
 
   setTool(tool) {
@@ -23,8 +38,12 @@ export class CanvasManagerNative {
 
   syncState(objects, mode) {
     this.objectsData = objects;
+    this.updateCanvasProxies(objects);
     if (this.mode !== mode) {
       this.mode = mode;
+    }
+    if (this.behaviorSyncListener) {
+      this.behaviorSyncListener(objects);
     }
   }
 
@@ -38,24 +57,181 @@ export class CanvasManagerNative {
   }
 
   destroy() {
+    this.canvasObjects.clear();
+    this.behaviorEngine?.stop();
     this.svgRef = null;
+  }
+
+  registerBehaviorSyncListener(listener) {
+    this.behaviorSyncListener = listener;
+  }
+
+  updateCanvasProxies(objects = []) {
+    const ids = new Set(objects.map(o => o.id));
+    for (const id of Array.from(this.canvasObjects.keys())) {
+      if (!ids.has(id)) {
+        this.canvasObjects.delete(id);
+      }
+    }
+    objects.forEach(obj => {
+      const proxy = this.canvasObjects.get(obj.id);
+      if (proxy) {
+        proxy.data = obj;
+      }
+    });
+  }
+
+  getFabricObjects() {
+    return this.objectsData.map(obj => this.ensureProxyForObject(obj)).filter(Boolean);
+  }
+
+  ensureProxyForObject(obj) {
+    if (!obj) return null;
+    let proxy = this.canvasObjects.get(obj.id);
+    if (!proxy) {
+      proxy = new NativeFabricObject(obj, this);
+      this.canvasObjects.set(obj.id, proxy);
+    } else {
+      proxy.data = obj;
+    }
+    return proxy;
+  }
+
+  setBehaviorEngine(engine) {
+    this.behaviorEngine = engine;
+  }
+
+  emitTrigger(triggerName, targetId, extraEvent = {}) {
+    if (!this.behaviorEngine || !targetId) return;
+    const event = { target: { id: targetId, ...extraEvent } };
+    this.behaviorEngine.handleTriggerEvent(triggerName, event);
   }
 }
 
-export function MobileCanvas({ objects, mode, canvasRef, onSelect, onModify, onDelete }) {
+class NativeFabricObject {
+  constructor(data, manager) {
+    this.data = data;
+    this.manager = manager;
+    this.scaleX = data.scaleX ?? 1;
+    this.scaleY = data.scaleY ?? 1;
+    this.opacity = data.opacity ?? 1;
+    this.angle = data.angle ?? 0;
+  }
+
+  get(key) {
+    switch (key) {
+      case 'left':
+        return this.data.x;
+      case 'top':
+        return this.data.y;
+      case 'width':
+        return this.data.width;
+      case 'height':
+        return this.data.height;
+      case 'scaleX':
+        return this.scaleX;
+      case 'scaleY':
+        return this.scaleY;
+      case 'opacity':
+        return this.opacity;
+      case 'angle':
+        return this.angle;
+      default:
+        return this.data[key];
+    }
+  }
+
+  set(props, value) {
+    const updates = {};
+    if (typeof props === 'string') {
+      this.assignValue(props, value, updates);
+    } else if (typeof props === 'object') {
+      Object.entries(props).forEach(([key, val]) => this.assignValue(key, val, updates));
+    }
+    if (Object.keys(updates).length) {
+      this.manager.onModify(this.data.id, updates);
+    }
+  }
+
+  assignValue(key, value, updates) {
+    switch (key) {
+      case 'left':
+        this.data.x = value;
+        updates.x = value;
+        break;
+      case 'top':
+        this.data.y = value;
+        updates.y = value;
+        break;
+      case 'width':
+        this.data.width = value;
+        updates.width = value;
+        break;
+      case 'height':
+        this.data.height = value;
+        updates.height = value;
+        break;
+      case 'fill':
+      case 'fillColor':
+        this.data.fillColor = value;
+        updates.fillColor = value;
+        break;
+      case 'opacity':
+        this.opacity = value;
+        this.data.opacity = value;
+        updates.opacity = value;
+        break;
+      case 'scaleX':
+        this.scaleX = value;
+        updates.scaleX = value;
+        break;
+      case 'scaleY':
+        this.scaleY = value;
+        updates.scaleY = value;
+        break;
+      case 'angle':
+        this.angle = value;
+        updates.angle = value;
+        break;
+      default:
+        this.data[key] = value;
+        updates[key] = value;
+        break;
+    }
+  }
+
+  intersectsWithObject(other) {
+    if (!other) return false;
+    const left = this.get('left') ?? 0;
+    const top = this.get('top') ?? 0;
+    const width = this.get('width') ?? 0;
+    const height = this.get('height') ?? 0;
+    const oLeft = other.get('left') ?? 0;
+    const oTop = other.get('top') ?? 0;
+    const oWidth = other.get('width') ?? 0;
+    const oHeight = other.get('height') ?? 0;
+    return !(left + width < oLeft || left > oLeft + oWidth || top + height < oTop || top > oTop + oHeight);
+  }
+}
+
+export function MobileCanvas({ objects, mode, canvasRef, onSelect, onModify, onDelete, onTrigger }) {
   const handleObjectPress = (id) => {
     if (mode === 'edit') {
       if (canvasRef?.current?.activeTool === 'erase') {
-        // 橡皮擦模式：删除物体
+        // 姗＄毊鎿︽ā寮忥細鍒犻櫎鐗╀綋
         if (onDelete) {
           onDelete(id);
         }
       } else if (onSelect) {
-        // 其他模式：选中物体
+        // 鍏朵粬妯″紡锛氶€変腑鐗╀綋
         onSelect(id);
       }
     }
+    if (mode === 'edit' && onTrigger) {
+      onTrigger(id, 'onClick');
+    }
   };
+
 
   // 缩放比例，适配手机屏幕
   const scaleX = CANVAS_WIDTH / 300;
@@ -63,6 +239,7 @@ export function MobileCanvas({ objects, mode, canvasRef, onSelect, onModify, onD
   const scale = Math.min(scaleX, scaleY);
 
   // 处理拖拽
+    // 澶勭悊鎷栨嫿
   const handleDrag = (id, offsetX, offsetY) => {
     if (mode === 'edit' && onModify) {
       const scaledOffsetX = offsetX / scale;
@@ -71,8 +248,10 @@ export function MobileCanvas({ objects, mode, canvasRef, onSelect, onModify, onD
         x: objects.find(obj => obj.id === id).x + scaledOffsetX,
         y: objects.find(obj => obj.id === id).y + scaledOffsetY
       });
+      onTrigger?.(id, 'onDrag', { dx: scaledOffsetX, dy: scaledOffsetY });
     }
   };
+
 
   // 为每个对象创建 PanResponder
   const createPanResponder = (id) => {

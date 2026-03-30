@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 import { BTEngine } from '../core/BTEngine';
 import { CanvasManager } from '../core/canvasManager';
-import { CanvasManagerNative, MobileCanvas } from '../core/CanvasManagerNative';
+import { MobileCanvas } from '../core/CanvasManagerNative';
 
 export const useCanvas = (objects, setObjects, mode, setSelectedId) => {
   const managerRef = useRef(null);
@@ -11,6 +11,8 @@ export const useCanvas = (objects, setObjects, mode, setSelectedId) => {
   const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
+    let cleanup = () => {};
+
     if (Platform.OS === 'web') {
       const script = document.createElement('script');
       script.src = 'https://cdn.jsdelivr.net/npm/fabric@5.3.0/dist/fabric.min.js';
@@ -24,32 +26,27 @@ export const useCanvas = (objects, setObjects, mode, setSelectedId) => {
           onAdd: (newObj) => setObjects(prev => [...prev, newObj]),
           onDelete: (id) => setObjects(prev => prev.filter(obj => obj.id !== id))
         });
-        
+
         btEnginRef.current = new BTEngine(managerRef.current);
+        managerRef.current.setBehaviorEngine(btEnginRef.current);
         btEnginRef.current.start();
-        managerRef.current.renderAll()
+        managerRef.current.renderAll();
 
         managerRef.current.syncState(objects, mode);
         setIsReady(true);
       };
       document.body.appendChild(script);
 
-      return () => {
+      cleanup = () => {
+        btEnginRef.current?.stop();
         if (managerRef.current) managerRef.current.destroy();
         script.remove();
       };
     } else {
-      managerRef.current = new CanvasManagerNative(canvasRef, {
-        onSelect: (id) => setSelectedId(id),
-        onModify: (id, updates) => {
-          setObjects(prev => prev.map(obj => obj.id === id ? { ...obj, ...updates } : obj));
-        },
-        onAdd: (newObj) => setObjects(prev => [...prev, newObj]),
-        onDelete: (id) => setObjects(prev => prev.filter(obj => obj.id !== id))
-      });
-      setIsReady(true);
-
+      return
     }
+
+    return cleanup;
   }, []);
 
   useEffect(() => {
@@ -63,10 +60,10 @@ export const useCanvas = (objects, setObjects, mode, setSelectedId) => {
   return { manager: managerRef.current, canvasRef };
 };
 
-export function CanvasRenderer({ objects, mode, canvasRef, onSelect, onModify, onDelete }) {
+export function CanvasRenderer({ objects, mode, canvasRef, onSelect, onModify, onDelete, onTrigger }) {
   if (Platform.OS === 'web') {
     return <canvas id="fabric-canvas" width="800" height="600" />;
   } else {
-    return <MobileCanvas objects={objects} mode={mode} canvasRef={canvasRef} onSelect={onSelect} onModify={onModify} onDelete={onDelete} />;
+    return <MobileCanvas objects={objects} mode={mode} canvasRef={canvasRef} onSelect={onSelect} onModify={onModify} onDelete={onDelete} onTrigger={onTrigger} />;
   }
 }

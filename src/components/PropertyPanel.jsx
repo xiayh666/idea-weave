@@ -1,6 +1,90 @@
 import { Layout, Palette, Play, Trash2, Zap } from "lucide-react";
+import { useState } from "react";
 
-export const PropertyPanel = ({ selectedObj, selectedId, updateObject, mode, onDelete }) => {
+const BEHAVIOR_TRIGGERS = [
+  { value: 'onClick', label: 'onClick - 点击' },
+  { value: 'onHover', label: 'onHover - 悬停' },
+  { value: 'onDrag', label: 'onDrag - 拖拽' },
+  { value: 'onTimer', label: 'onTimer - 定时器' }
+];
+
+const BEHAVIOR_ACTIONS = [
+  { value: 'modify', label: 'Modify / 修改属性' },
+  { value: 'move', label: 'Move / 移动' },
+  { value: 'scale', label: 'Scale / 缩放' },
+  { value: 'fade', label: 'Fade / 淡入淡出' },
+  { value: 'launch', label: 'Launch / 发射' }
+];
+
+export const PropertyPanel = ({ selectedObj, selectedId, updateObject, mode, onDelete, onAddBehavior }) => {
+  const [newBehavior, setNewBehavior] = useState({
+    trigger: 'onClick',
+    action: 'modify',
+    color: '#3b82f6',
+    duration: 500,
+    dx: 0,
+    dy: -240,
+    scaleX: 1.2,
+    scaleY: 1.2,
+    opacity: 0.5,
+    spin: 360,
+    addSpin: true,
+    name: ''
+  });
+
+  const handleNewBehaviorChange = (field, value) => {
+    setNewBehavior(prev => ({ ...prev, [field]: value }));
+  };
+
+  const buildBehaviorParams = () => {
+    switch (newBehavior.action) {
+      case 'modify':
+        return { color: newBehavior.color };
+      case 'move':
+        return {
+          dx: Number(newBehavior.dx) || 0,
+          dy: Number(newBehavior.dy) || 0
+        };
+      case 'scale':
+        return {
+          scaleX: Number(newBehavior.scaleX) || 1,
+          scaleY: Number(newBehavior.scaleY) || 1
+        };
+      case 'fade':
+        return {
+          opacity: Math.max(0, Math.min(1, Number(newBehavior.opacity) || 0.5))
+        };
+      case 'launch':
+        return {
+          dx: Number(newBehavior.dx) || 0,
+          dy: Number(newBehavior.dy) || 0,
+          duration: Math.max(50, Number(newBehavior.duration) || 500),
+          spin: Number(newBehavior.spin) || 0,
+          addSpin: Boolean(newBehavior.addSpin)
+        };
+      default:
+        return {};
+    }
+  };
+
+  const handleCreateBehavior = () => {
+    if (!onAddBehavior) return;
+    const params = buildBehaviorParams();
+    const behavior = {
+      id: `bh-${Date.now()}`,
+      name: newBehavior.name || `${newBehavior.trigger}-${newBehavior.action}`,
+      trigger: newBehavior.trigger,
+      behaviorTree: {
+        node: 'action',
+        name: newBehavior.action,
+        params,
+        duration: Number(newBehavior.duration) || 500
+      }
+    };
+    onAddBehavior(behavior);
+    setNewBehavior(prev => ({ ...prev, name: '', duration: 500 }));
+  };
+
   if (!selectedObj || mode !== 'edit') {
     return (
       <aside style={styles.aside}>
@@ -93,17 +177,189 @@ export const PropertyPanel = ({ selectedObj, selectedId, updateObject, mode, onD
         </section>
 
         {/* 交互部分 */}
-        <section style={styles.section}>
-          <div style={styles.sectionHeader}>
-            <Zap size={10} /> 交互行为 / Behaviors
-          </div>
-          {selectedObj.behaviors?.length ? selectedObj.behaviors.map(b => (
-            <div key={b.id} style={styles.behaviorCard}>
-              <span style={styles.behaviorName}>{b.name}</span>
-              <p style={styles.behaviorDesc}>{b.desc}</p>
+                  {/* 浜や簰閮ㄥ垎 */}
+          <section style={styles.section}>
+            <div style={styles.sectionHeader}>
+              <Zap size={10} /> 浜や簰琛屼负 / Behaviors
             </div>
-          )) : <div style={styles.emptyText}>暂无行为</div>}
-        </section>
+            <div style={styles.behaviorList}>
+              {selectedObj.behaviors?.length ? selectedObj.behaviors.map(b => (
+                <div key={b.id} style={styles.behaviorEntry}>
+                  <div style={styles.behaviorEntryTop}>
+                    <span style={styles.behaviorEntryTitle}>{b.trigger} · {b.behaviorTree?.name || b.name}</span>
+                    {b.behaviorTree?.duration && (
+                      <span style={styles.behaviorEntryMeta}>{b.behaviorTree.duration}ms</span>
+                    )}
+                  </div>
+                  <p style={styles.behaviorDesc}>
+                    {b.behaviorTree?.params ? JSON.stringify(b.behaviorTree.params) : '无参数'}
+                  </p>
+                </div>
+              )) : <div style={styles.emptyText}>暂无行为</div>}
+            </div>
+            <div style={styles.behaviorForm}>
+              <div style={styles.formRow}>
+                <label style={styles.behaviorFormLabel}>触发器</label>
+                <select
+                  value={newBehavior.trigger}
+                  onChange={(e) => handleNewBehaviorChange('trigger', e.target.value)}
+                  style={styles.behaviorFormInput}
+                >
+                  {BEHAVIOR_TRIGGERS.map(trigger => (
+                    <option key={trigger.value} value={trigger.value}>{trigger.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={styles.formRow}>
+                <label style={styles.behaviorFormLabel}>动作</label>
+                <select
+                  value={newBehavior.action}
+                  onChange={(e) => handleNewBehaviorChange('action', e.target.value)}
+                  style={styles.behaviorFormInput}
+                >
+                  {BEHAVIOR_ACTIONS.map(action => (
+                    <option key={action.value} value={action.value}>{action.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={styles.formRow}>
+                <label style={styles.behaviorFormLabel}>持续 (ms)</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={newBehavior.duration}
+                  onChange={(e) => handleNewBehaviorChange('duration', e.target.value)}
+                  style={styles.behaviorFormInput}
+                />
+              </div>
+              {newBehavior.action === 'modify' && (
+                <div style={styles.formRow}>
+                  <label style={styles.behaviorFormLabel}>颜色</label>
+                  <input
+                    type="color"
+                    value={newBehavior.color}
+                    onChange={(e) => handleNewBehaviorChange('color', e.target.value)}
+                    style={styles.colorPicker}
+                  />
+                </div>
+              )}
+              {newBehavior.action === 'move' && (
+                <div style={styles.formRow}>
+                  <label style={styles.behaviorFormLabel}>偏移</label>
+                  <div style={styles.fieldGroup}>
+                    <input
+                      type="number"
+                      placeholder="dx"
+                      value={newBehavior.dx}
+                      onChange={(e) => handleNewBehaviorChange('dx', e.target.value)}
+                      style={styles.behaviorFormInput}
+                    />
+                    <input
+                      type="number"
+                      placeholder="dy"
+                      value={newBehavior.dy}
+                      onChange={(e) => handleNewBehaviorChange('dy', e.target.value)}
+                      style={styles.behaviorFormInput}
+                    />
+                  </div>
+                </div>
+              )}
+              {newBehavior.action === 'scale' && (
+                <div style={styles.formRow}>
+                  <label style={styles.behaviorFormLabel}>缩放</label>
+                  <div style={styles.fieldGroup}>
+                    <input
+                      type="number"
+                      step="0.1"
+                      placeholder="scaleX"
+                      value={newBehavior.scaleX}
+                      onChange={(e) => handleNewBehaviorChange('scaleX', e.target.value)}
+                      style={styles.behaviorFormInput}
+                    />
+                    <input
+                      type="number"
+                      step="0.1"
+                      placeholder="scaleY"
+                      value={newBehavior.scaleY}
+                      onChange={(e) => handleNewBehaviorChange('scaleY', e.target.value)}
+                      style={styles.behaviorFormInput}
+                    />
+                  </div>
+                </div>
+              )}
+              {newBehavior.action === 'fade' && (
+                <div style={styles.formRow}>
+                  <label style={styles.behaviorFormLabel}>透明度</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="1"
+                    step="0.1"
+                    value={newBehavior.opacity}
+                    onChange={(e) => handleNewBehaviorChange('opacity', e.target.value)}
+                    style={styles.behaviorFormInput}
+                  />
+                </div>
+              )}
+              {newBehavior.action === 'launch' && (
+                <>
+                  <div style={styles.formRow}>
+                    <label style={styles.behaviorFormLabel}>偏移 dx / dy</label>
+                    <div style={styles.fieldGroup}>
+                      <input
+                        type="number"
+                        placeholder="dx"
+                        value={newBehavior.dx}
+                        onChange={(e) => handleNewBehaviorChange('dx', e.target.value)}
+                        style={styles.behaviorFormInput}
+                      />
+                      <input
+                        type="number"
+                        placeholder="dy"
+                        value={newBehavior.dy}
+                        onChange={(e) => handleNewBehaviorChange('dy', e.target.value)}
+                        style={styles.behaviorFormInput}
+                      />
+                    </div>
+                  </div>
+                  <div style={styles.formRow}>
+                    <label style={styles.behaviorFormLabel}>旋转</label>
+                    <div style={styles.fieldGroup}>
+                      <input
+                        type="number"
+                        placeholder="spin"
+                        value={newBehavior.spin}
+                        onChange={(e) => handleNewBehaviorChange('spin', e.target.value)}
+                        style={styles.behaviorFormInput}
+                      />
+                      <label style={styles.addSpinWrapper}>
+                        <input
+                          type="checkbox"
+                          checked={!!newBehavior.addSpin}
+                          onChange={(e) => handleNewBehaviorChange('addSpin', e.target.checked)}
+                        />
+                        添加旋转
+                      </label>
+                    </div>
+                  </div>
+                </>
+              )}
+              <div style={styles.formRow}>
+                <label style={styles.behaviorFormLabel}>名称</label>
+                <input
+                  type="text"
+                  value={newBehavior.name}
+                  onChange={(e) => handleNewBehaviorChange('name', e.target.value)}
+                  placeholder="行为名称"
+                  style={styles.behaviorFormInput}
+                />
+              </div>
+              <button type="button" onClick={handleCreateBehavior} style={styles.addBehaviorButton}>
+                + 添加行为
+              </button>
+            </div>
+          </section>
+
 
         {/* 操作部分 */}
         <section>
@@ -225,6 +481,82 @@ const styles = {
     borderRadius: 6,
     outline: 'none',
     textAlign: 'center',
+    fontSize: 12
+  },
+  behaviorList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+    marginBottom: 12
+  },
+  behaviorEntry: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 8,
+    padding: 10,
+    border: '1px solid #e2e8f0'
+  },
+  behaviorEntryTop: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6
+  },
+  behaviorEntryTitle: {
+    fontSize: 12,
+    fontWeight: 600,
+    color: '#1e293b'
+  },
+  behaviorEntryMeta: {
+    fontSize: 11,
+    color: '#94a3b8'
+  },
+  behaviorForm: {
+    border: '1px dashed #cbd5e1',
+    borderRadius: 12,
+    padding: 12,
+    backgroundColor: '#fff'
+  },
+  formRow: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 6,
+    marginBottom: 8
+  },
+  behaviorFormLabel: {
+    fontSize: 12,
+    color: '#475569',
+    fontWeight: 600,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3
+  },
+  behaviorFormInput: {
+    width: '100%',
+    padding: 6,
+    borderRadius: 6,
+    border: '1px solid #e2e8f0',
+    outline: 'none',
+    fontSize: 13
+  },
+  fieldGroup: {
+    display: 'flex',
+    gap: 8
+  },
+  addSpinWrapper: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    fontSize: 12,
+    color: '#475569'
+  },
+  addBehaviorButton: {
+    marginTop: 12,
+    padding: '8px 12px',
+    backgroundColor: '#3b82f6',
+    color: 'white',
+    border: 'none',
+    borderRadius: 8,
+    cursor: 'pointer',
+    fontWeight: 600,
     fontSize: 12
   },
   behaviorCard: {

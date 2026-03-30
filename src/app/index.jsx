@@ -1,5 +1,5 @@
 import { Trash2 } from 'lucide-react-native';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Dimensions, Platform, Text, TouchableOpacity, View } from 'react-native';
 import { AiChatFooter } from '../components/AiChatFooter';
 import Header from '../components/Header';
@@ -9,6 +9,25 @@ import { Toolbar } from '../components/Toolbar';
 import { askAI } from '../core/agent';
 import { CanvasRenderer, useCanvas } from '../hooks/useCanvas';
 import { styles } from './index_style';
+
+const SLINGSHOT_ID = 'slingshot';
+const SLINGSHOT_BASE_POSITION = { x: 420, y: 420 };
+const SLINGSHOT_LAUNCH_THRESHOLD = 14;
+
+const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+const rectsOverlap = (a, b) => {
+  if (!a || !b) return false;
+  const ax1 = a.x;
+  const ay1 = a.y;
+  const ax2 = a.x + (a.width || 0);
+  const ay2 = a.y + (a.height || 0);
+  const bx1 = b.x;
+  const by1 = b.y;
+  const bx2 = b.x + (b.width || 0);
+  const by2 = b.y + (b.height || 0);
+  return ax1 < bx2 && ax2 > bx1 && ay1 < by2 && ay2 > by1;
+};
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const isMobile = Platform.OS !== 'web';
@@ -77,13 +96,150 @@ const INITIAL_OBJECTS = [
         }
       }
     ]
+  },
+  {
+    id: 'obj-3',
+    name: '互动方块',
+    type: 'rect',
+    x: 320,
+    y: 220,
+    width: 110,
+    height: 110,
+    fillColor: '#10b981',
+    borderRadius: 12,
+    behaviors: [
+      {
+        id: 'bh-3',
+        trigger: 'onClick',
+        behaviorTree: {
+          node: 'sequence',
+          children: [
+            {
+              node: 'action',
+              name: 'scale',
+              params: { scaleX: 1.25, scaleY: 1.25 },
+              duration: 400
+            },
+            {
+              node: 'action',
+              name: 'wait',
+              params: { duration: 300 }
+            },
+            {
+              node: 'action',
+              name: 'scale',
+              params: { scaleX: 1.0, scaleY: 1.0 },
+              duration: 300
+            }
+          ]
+        }
+      },
+      {
+        id: 'bh-4',
+        trigger: 'onDrag',
+        behaviorTree: {
+          node: 'action',
+          name: 'modify',
+          params: {
+            color: '#ef4444'
+          }
+        }
+      }
+      ]
+    },
+  {
+    id: 'launcher-base',
+    name: '发射器',
+    type: 'rect',
+      x: 320,
+      y: 440,
+      width: 220,
+      height: 50,
+      fillColor: '#b45309',
+      borderRadius: 26,
+      behaviors: [
+        {
+          id: 'bh-launch',
+          trigger: 'onClick',
+        behaviorTree: {
+          node: 'inside',
+          child: {
+            node: 'action',
+            name: 'launch',
+            params: {
+              dx: 800,
+              dy: 0,
+              addSpin: false,
+              spin: 0
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+      id: 'projectile-1',
+      name: '发射物',
+      type: 'circle',
+      x: 330,
+      y: 400,
+      width: 40,
+      height: 40,
+      fillColor: '#f97316',
+    behaviors: []
+  },
+  {
+    id: 'box-area',
+    name: '箱子',
+    type: 'rect',
+    x: 520,
+    y: 420,
+    width: 240,
+    height: 120,
+    fillColor: '#64748b',
+    borderRadius: 12,
+    behaviors: [
+      {
+        id: 'box-click',
+        trigger: 'onClick',
+        behaviorTree: {
+          node: 'inside',
+          child: {
+            node: 'action',
+            name: 'modify',
+            params: {
+              color: '#dc2626'
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    id: 'box-item-1',
+    name: '箱内物体1',
+    type: 'rect',
+    x: 540,
+    y: 450,
+    width: 60,
+    height: 60,
+    fillColor: '#fbbf24',
+    behaviors: []
+  },
+  {
+    id: 'box-item-2',
+    name: '箱内物体2',
+    type: 'rect',
+    x: 620,
+    y: 450,
+    width: 60,
+    height: 60,
+    fillColor: '#0ea5e9',
+    behaviors: []
   }
 ];
 
 // 存储对话历史
-let conversationHistory = [];
-
-
 export default function App() {
   const [objects, setObjects] = useState(INITIAL_OBJECTS);
   const [selectedId, setSelectedId] = useState(INITIAL_OBJECTS[0].id);
@@ -91,6 +247,9 @@ export default function App() {
   const [mode, setMode] = useState('edit');
   const [activeTool, setActiveTool] = useState('select');
   const [activeTab, setActiveTab] = useState('canvas');
+  const [aiStatus, setAiStatus] = useState(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [conversationHistory, setConversationHistory] = useState([]);
 
   const handleAddCustomObject = () => {
     const newId = `obj-${Date.now()}`;
@@ -129,7 +288,56 @@ export default function App() {
     setObjects(prev => prev.map(o => o.id === id ? { ...o, ...updates } : o));
   }, []);
 
+  const handleAddBehavior = useCallback((behavior) => {
+    if (!selectedId) return;
+    const currentBehaviors = selectedObj?.behaviors || [];
+    updateObject(selectedId, { behaviors: [...currentBehaviors, behavior] });
+  }, [selectedId, selectedObj, updateObject]);
+
   const { manager: canvasManager, canvasRef } = useCanvas(objects, setObjects, mode, setSelectedId);
+  const triggerBehavior = canvasManager?.emitTrigger?.bind(canvasManager);
+
+  const slingshotDistanceRef = useRef(0);
+  const lastLaunchRef = useRef(0);
+
+  useEffect(() => {
+    const slingshot = objects.find(o => o.id === SLINGSHOT_ID);
+    if (!slingshot) return;
+    const dx = slingshot.x - SLINGSHOT_BASE_POSITION.x;
+    const dy = slingshot.y - SLINGSHOT_BASE_POSITION.y;
+    const distance = Math.hypot(dx, dy);
+    const now = Date.now();
+
+    if (distance > SLINGSHOT_LAUNCH_THRESHOLD && slingshotDistanceRef.current <= SLINGSHOT_LAUNCH_THRESHOLD && now - lastLaunchRef.current > 300) {
+      const overlapped = objects.find(obj => obj.id !== SLINGSHOT_ID && rectsOverlap(slingshot, obj));
+      if (overlapped) {
+        const vector = {
+          x: clamp(-dx * 1.5, -210, 210),
+          y: clamp(-dy * 1.4, -210, 210)
+        };
+        setObjects(prev => prev.map(obj => {
+          if (obj.id === overlapped.id) {
+            return {
+              ...obj,
+              x: clamp(obj.x + vector.x, 0, 750),
+              y: clamp(obj.y + vector.y, 0, 550)
+            };
+          }
+          if (obj.id === SLINGSHOT_ID) {
+            return {
+              ...obj,
+              x: SLINGSHOT_BASE_POSITION.x,
+              y: SLINGSHOT_BASE_POSITION.y
+            };
+          }
+          return obj;
+        }));
+        lastLaunchRef.current = now;
+      }
+    }
+
+    slingshotDistanceRef.current = distance;
+  }, [objects]);
 
   useEffect(() => {
     if (canvasManager) {
@@ -137,79 +345,126 @@ export default function App() {
     }
   }, [activeTool, canvasManager]);
 
+  const appendHistory = (entry) => {
+    setConversationHistory(prev => {
+      const next = [...prev, entry];
+      return next.slice(-4);
+    });
+  };
+
 
 
 // 在你的组件内部
 const handleAICommand = async (userInput) => {
   if (!userInput.trim()) return;
+  setAiStatus('AI 正在处理中…');
+  setAiLoading(true);
+  const historySeed = { input: userInput, timestamp: Date.now() };
 
   try {
-    // 1. 调用 AI，并传入当前选中的物体 ID（作为上下文）
-    const action = await askAI(userInput, selectedId); 
-    
-    // 2. 根据 AI 返回的指令类型进行路由
-    switch (action.op) {
-      case 'CREATE':
-        console.log(action)
-        console.log(action.data.behaviors)
-        if (action.data) {
-          const newId = action.data.id || `ai-obj-${Date.now()}`;
-          const newObj = {
-            ...action.data,
-            id: newId,
-            behaviors: action.data.behaviors || [] // 透传行为树
-          };
-          
-          // 更新 React 状态，把新物体加进画布
-          setObjects(prev => [...prev, newObj]);
-          // 可选：创建完自动选中它
-          setSelectedId(newId);
-          console.log("create")
-        }
-        break;
-
-      case 'MODIFY':
-        if (action.properties) {
-          // 目标 ID：优先用 AI 识别出的 ID，否则用当前用户选中的 ID
-          const targetId = action.properties.id || selectedId;
-          
-          if (targetId) {
-            // 调用你原有的 updateObject 函数
-            updateObject(targetId, action.properties);
-          } else {
-            alert("请先选中一个物体，或者在描述里说清楚修改哪一个！");
-          }
-        }
-        break;
-
-      case 'DELETE':
-        if (action.ids === 'all') {
-          // 清空画布
-          setObjects([]);
-          setSelectedId(null);
-        } else {
-          // 删除特定物体
-          const targetId = (action.ids && action.ids[0]) ? action.ids[0] : selectedId;
-          if (targetId) {
-             // 调用你原有的 deleteObject 函数
-            deleteObject(targetId);
-            if (selectedId === targetId) setSelectedId(null);
-          } else {
-            alert("请先选中要删除的物体！");
-          }
-        }
-        break;
-
-      default:
-        console.warn("未知的操作类型:", action.op);
+    const response = await askAI(userInput, selectedId);
+    if (!response.success) {
+      const message = response.error || 'AI 返回失败';
+      setAiStatus(message);
+      appendHistory({ ...historySeed, status: 'error', message });
+      return;
     }
 
+    const action = response.action;
+    const baseUpdate = { ...historySeed, op: action.op };
+
+    switch (action.op) {
+      case 'CREATE': {
+        if (!action.data) {
+          const message = 'AI 未提供创建数据';
+          setAiStatus(message);
+          appendHistory({ ...baseUpdate, status: 'error', message });
+          break;
+        }
+        const newId = action.data.id || `ai-obj-${Date.now()}`;
+        const newObj = {
+          id: newId,
+          name: action.data.name || action.data.type || `AI_${newId}`,
+          type: action.data.type || 'rect',
+          x: action.data.x ?? 60,
+          y: action.data.y ?? 60,
+          width: action.data.width ?? 60,
+          height: action.data.height ?? 60,
+          fillColor: action.data.fillColor || '#8b5cf6',
+          borderRadius: action.data.borderRadius ?? 8,
+          text: action.data.text || '',
+          fontSize: action.data.fontSize ?? 16,
+          stroke: action.data.stroke,
+          strokeWidth: action.data.strokeWidth,
+          behaviors: action.data.behaviors || [],
+        };
+        setObjects(prev => [...prev, newObj]);
+        setSelectedId(newId);
+        setAiStatus('AI 已创建对象');
+        appendHistory({ ...baseUpdate, status: 'success', message: `创建 ${newObj.name}` });
+        break;
+      }
+      case 'MODIFY':
+      case 'UPDATE': {
+        const targetId = (action.ids && action.ids[0]) || action.data?.id || selectedId;
+        if (!targetId) {
+          const message = '请选择一个对象后再修改';
+          setAiStatus(message);
+          appendHistory({ ...baseUpdate, status: 'error', message });
+          break;
+        }
+        const properties = action.properties || action.data?.properties || action.data || {};
+        if (Object.keys(properties).length === 0) {
+          const message = 'AI 没有提供需要修改的字段';
+          setAiStatus(message);
+          appendHistory({ ...baseUpdate, status: 'error', message });
+          break;
+        }
+        updateObject(targetId, properties);
+        setAiStatus('AI 修改已应用');
+        appendHistory({ ...baseUpdate, status: 'success', message: `修改 ${targetId}` });
+        break;
+      }
+      case 'DELETE': {
+        if (action.ids === 'all') {
+          setObjects([]);
+          setSelectedId(null);
+          setAiStatus('AI 清空了画布');
+          appendHistory({ ...baseUpdate, status: 'success', message: '删除全部' });
+          break;
+        }
+        const idsToDelete = action.ids || (action.data?.ids ? action.data.ids : (action.data?.id ? [action.data.id] : []));
+        if (!idsToDelete || idsToDelete.length === 0) {
+          const message = '未找到需要删除的对象';
+          setAiStatus(message);
+          appendHistory({ ...baseUpdate, status: 'error', message });
+          break;
+        }
+        idsToDelete.forEach(id => deleteObject(id));
+        if (idsToDelete.includes(selectedId)) {
+          setSelectedId(null);
+        }
+        setAiStatus('AI 删除了对象');
+        appendHistory({ ...baseUpdate, status: 'success', message: `删除 ${idsToDelete.join(',')}` });
+        break;
+      }
+      default: {
+        const message = 'AI 返回了未识别的操作';
+        console.warn(message, action);
+        setAiStatus(message);
+        appendHistory({ ...baseUpdate, status: 'error', message });
+      }
+    }
   } catch (error) {
-    console.error("AI 处理失败:", error);
-    alert("AI 助手开小差了，请换个说法试试~");
+    const message = error?.message || 'AI 处理失败';
+    console.error('AI 交互失败', error);
+    setAiStatus(message);
+    appendHistory({ ...historySeed, status: 'error', message });
+  } finally {
+    setAiLoading(false);
+    setInput('');
   }
 };
-
 
 const handleClearCanvas = () => {
   setObjects(INITIAL_OBJECTS);
@@ -270,6 +525,7 @@ if (isMobile) {
                 onSelect={setSelectedId}
                 onModify={updateObject}
                 onDelete={deleteObject}
+                onTrigger={triggerBehavior}
               />
             </View>
 
@@ -282,12 +538,26 @@ if (isMobile) {
           </View>
         )}
 
-        {activeTab === 'properties' && (
-          <PropertyPanel selectedObj={selectedObj} selectedId={selectedId} updateObject={updateObject} onDelete={deleteObject} mode={mode} />
-        )}
+          {activeTab === 'properties' && (
+            <PropertyPanel
+              selectedObj={selectedObj}
+              selectedId={selectedId}
+              updateObject={updateObject}
+              onDelete={deleteObject}
+              mode={mode}
+              onAddBehavior={handleAddBehavior}
+            />
+          )}
       </View>
 
-      <AiChatFooter input={input} setInput={setInput} handleAICommand={handleAICommand} />
+      <AiChatFooter
+        input={input}
+        setInput={setInput}
+        handleAICommand={handleAICommand}
+        statusMessage={aiStatus}
+        loading={aiLoading}
+        history={conversationHistory}
+      />
     </View>
   );
 }
@@ -327,14 +597,15 @@ return (
               <View style={styles.webGrid} />
             )}
 
-            <CanvasRenderer
-              objects={objects}
-              mode={mode}
-              canvasRef={canvasRef}
-              onSelect={setSelectedId}
-              onModify={updateObject}
-              onDelete={deleteObject}
-            />
+              <CanvasRenderer
+                objects={objects}
+                mode={mode}
+                canvasRef={canvasRef}
+                onSelect={setSelectedId}
+                onModify={updateObject}
+                onDelete={deleteObject}
+                onTrigger={triggerBehavior}
+              />
           </View>
 
           {/* 底部状态栏 */}
@@ -349,11 +620,25 @@ return (
 
       {/* 右侧属性面板 */}
       <View style={styles.rightSidebar}>
-        <PropertyPanel selectedObj={selectedObj} selectedId={selectedId} updateObject={updateObject} onDelete={deleteObject} mode={mode} />
+        <PropertyPanel
+          selectedObj={selectedObj}
+          selectedId={selectedId}
+          updateObject={updateObject}
+          onDelete={deleteObject}
+          mode={mode}
+          onAddBehavior={handleAddBehavior}
+        />
       </View>
     </View>
 
-    <AiChatFooter input={input} setInput={setInput} handleAICommand={handleAICommand} />
+    <AiChatFooter
+      input={input}
+      setInput={setInput}
+      handleAICommand={handleAICommand}
+      statusMessage={aiStatus}
+      loading={aiLoading}
+      history={conversationHistory}
+    />
   </View>
 );
 }
