@@ -2,6 +2,34 @@
 
 const clampValue = (value, min, max) => Math.max(min, Math.min(max, value));
 
+const getBounds = (obj) => ({
+  left: obj?.left ?? 0,
+  top: obj?.top ?? 0,
+  width: (obj?.width ?? 0) * (obj?.scaleX ?? 1),
+  height: (obj?.height ?? 0) * (obj?.scaleY ?? 1),
+});
+
+const rectsOverlap = (a, b) => {
+  const ax1 = a.left;
+  const ay1 = a.top;
+  const ax2 = a.left + (a.width || 0);
+  const ay2 = a.top + (a.height || 0);
+  const bx1 = b.left;
+  const by1 = b.top;
+  const bx2 = b.left + (b.width || 0);
+  const by2 = b.top + (b.height || 0);
+  return ax1 < bx2 && ax2 > bx1 && ay1 < by2 && ay2 > by1;
+};
+
+const getDataBounds = (data) => ({
+  left: data?.x ?? 0,
+  top: data?.y ?? 0,
+  width: (data?.width ?? 0) * (data?.scaleX ?? 1),
+  height: (data?.height ?? 0) * (data?.scaleY ?? 1)
+});
+
+const hasSlingshotDropBehavior = (obj) => (obj?.behaviors || []).some(b => b.trigger === 'onSlingshotDrop');
+
 export const BTStatus = {
   SUCCESS: 1,
   FAILURE: 2,
@@ -278,8 +306,36 @@ export class ActionNode extends BTNode {
           const target = targetObj || emitterObj;
           if (!target) return BTStatus.FAILURE;
           target.setCoords();
-          const dx = this.params.dx ?? this.params.forceX ?? 0;
-          const dy = this.params.dy ?? this.params.forceY ?? -220;
+          const metaVector = context.behaviorMeta?.dragVector;
+          const dragStart = context.behaviorMeta?.dragStart;
+          const dragEnd = context.behaviorMeta?.dragEnd;
+          const multiplier = this.params.dragMultiplier ?? 1;
+          const maxForce = this.params.maxForce ?? 220;
+          let dx = this.params.dx ?? this.params.forceX ?? 0;
+          let dy = this.params.dy ?? this.params.forceY ?? -220;
+          const computeForce = (vector) => {
+            const mag = Math.hypot(vector.x, vector.y);
+            if (mag === 0) return null;
+            const force = Math.min(mag * multiplier, maxForce);
+            return { x: vector.x / mag * force, y: vector.y / mag * force };
+          };
+          let directionVector = null;
+          const canUseReleaseVector = dragStart && dragEnd && (this.params.useReleaseVector ?? true);
+          if (canUseReleaseVector) {
+            directionVector = {
+              x: dragEnd.left - dragStart.left,
+              y: dragEnd.top - dragStart.top
+            };
+          } else if (this.params.useDragVector && metaVector) {
+            directionVector = metaVector;
+          }
+          if (directionVector) {
+            const forceVector = computeForce(directionVector);
+            if (forceVector) {
+              dx = -forceVector.x;
+              dy = -forceVector.y;
+            }
+          }
           const targetLeft = (target.left ?? 0) + dx;
           const targetTop = (target.top ?? 0) + dy;
           const targetWidth = (target.width ?? 0) * (target.scaleX ?? 1);
@@ -406,13 +462,24 @@ export class InsideNode extends BTNode {
     if (!canvas || !emitter) return [];
     emitter.setCoords();
     const filterIds = Array.isArray(this.params.targetIds) ? new Set(this.params.targetIds) : null;
-    return (canvas.getObjects() || [])
+    const targetIds = new Set();
+    const droppedId = context.behaviorMeta?.droppedObjectId;
+    if (droppedId && droppedId !== emitter.id) {
+      const droppedObj = canvas?.getObjects().find(o => o.id === droppedId);
+      if (droppedObj && (!filterIds || filterIds.has(droppedObj.id))) {
+        droppedObj.setCoords();
+        targetIds.add(droppedObj.id);
+      }
+    }
+    (canvas.getObjects() || [])
       .filter(obj => obj && obj.id && obj.id !== emitter.id && (!filterIds || filterIds.has(obj.id)))
-      .filter(obj => {
+      .forEach(obj => {
         obj.setCoords();
-        return emitter.intersectsWithObject(obj);
-      })
-      .map(obj => obj.id);
+        if (emitter.intersectsWithObject(obj)) {
+          targetIds.add(obj.id);
+        }
+      });
+    return Array.from(targetIds);
   }
 
   tick(context) {
@@ -473,8 +540,29 @@ export class ConditionNode extends BTNode {
         return targetObj === canvasManager.canvas.getActiveObject() ? BTStatus.SUCCESS : BTStatus.FAILURE;
       }
       case 'equals': {
-        const actual = context[this.params.source] ?? '';
+        let actual = "";
+        context.canvasManager.objectsData.forEach(i => {
+          if (i.id == context.targetObj.id) {
+            actual = i[this.params.prop]
+          }
+          
+        });
+        console.log("context:", context)
+        console.log("this.params:", this.params)
+        console.log("this.params.prop:", this.params.prop)
+        console.log("actual", actual)
+        console.log("this.params.value:", this.params.value)
+        console.log(actual === this.params.value)
+
         return actual === this.params.value ? BTStatus.SUCCESS : BTStatus.FAILURE;
+      }
+      case 'isOverlapping': {
+        if (!targetObj) return BTStatus.FAILURE;
+        const targetB = canvasManager.canvas.getObjects().find(o => o.id === this.params.targetId);
+        if (!targetB) return BTStatus.FAILURE;
+        const boundsA = getBounds(targetObj);
+        const boundsB = getBounds(targetB);
+        return rectsOverlap(boundsA, boundsB) ? BTStatus.SUCCESS : BTStatus.FAILURE;
       }
       default:
         return BTStatus.FAILURE;
@@ -488,6 +576,10 @@ export class BTEngine {
     this.activeTrees = [];
     this.isRunning = false;
     this.draggingObjects = new Set();
+    this.dragStartPositions = new Map();
+    this.draggingOverSlingshot = new Map();
+    this.mouseDownTargetId = null;
+    this.mouseDragCandidates = new Set();
     this.timerHandles = new Map();
 
     if (this.canvasManager.registerBehaviorSyncListener) {
@@ -542,6 +634,15 @@ export class BTEngine {
     }
   }
 
+  getSlingshotBases() {
+    return (this.canvasManager.objectsData || []).filter(hasSlingshotDropBehavior);
+  }
+
+  findSlingshotBaseForBounds(bounds) {
+    if (!bounds) return null;
+    return this.getSlingshotBases().find(base => rectsOverlap(bounds, getDataBounds(base)));
+  }
+
   getBehaviorKey(objectId, behavior) {
     const behaviorId = behavior.id || behavior.name || Math.random().toString(36).slice(2, 8);
     return `${objectId}_${behavior.trigger || 'trigger'}_${behaviorId}`;
@@ -564,51 +665,128 @@ export class BTEngine {
     });
   }
 
-  handleTriggerEvent(triggerName, event) {
-    const target = event?.target;
-    if (!target || !target.id) return;
-    const objectData = this.canvasManager.objectsData.find(o => o.id === target.id);
-    if (!objectData || !objectData.behaviors) return;
+  isInteractionMode() {
+    return this.canvasManager?.mode === 'play';
+  }
+
+  handleTriggerEvent(triggerName, event, meta = {}) {
+    if (!this.isInteractionMode()) return;
+
+    const canvas = this.canvasManager.canvas;
+    const fallbackId = meta.targetId;
+    const targetFromEvent = event?.target;
+    const targetId = targetFromEvent?.id || fallbackId;
+    if (!targetId) return;
+    const objectData = this.canvasManager.objectsData.find(o => o.id === targetId);
+    if (!objectData || !Array.isArray(objectData.behaviors)) return;
+    const normalizedEvent = targetFromEvent && targetFromEvent.id === targetId
+      ? event
+      : { ...event, target: canvas?.getObjects().find(o => o.id === targetId) };
     objectData.behaviors.forEach(behavior => {
       if (behavior.trigger === triggerName) {
-        this.activateBehavior(objectData, behavior, { trigger: triggerName, event });
+        this.activateBehavior(objectData, behavior, { trigger: triggerName, event: normalizedEvent, ...meta });
       }
     });
   }
 
-  parseNode(jsonNode) {
+  // BTEngine.jsx 中的 parseNode 方法修改
+parseNode(jsonNode) {
+  if (!jsonNode) return null;
+  let node = null;
+  const id = jsonNode.id || null; // 提取 ID
+
+  switch (jsonNode.node) {
+    case 'sequence':
+      node = new SequenceNode((jsonNode.children || []).map(c => this.parseNode(c)).filter(Boolean));
+      break;
+    case 'selector':
+      node = new SelectorNode((jsonNode.children || []).map(c => this.parseNode(c)).filter(Boolean));
+      break;
+    case 'parallel':
+      node = new ParallelNode((jsonNode.children || []).map(c => this.parseNode(c)).filter(Boolean));
+      break;
+    case 'repeat': {
+      const child = jsonNode.child ? this.parseNode(jsonNode.child) : this.parseNode((jsonNode.children || [])[0]);
+      const count = jsonNode.params?.count ?? jsonNode.count ?? 1;
+      const delay = jsonNode.params?.delay || 0;
+      node = new RepeatNode(child, count, delay);
+      break;
+    }
+    case 'foreach': {
+      const child = jsonNode.child ? this.parseNode(jsonNode.child) : this.parseNode((jsonNode.children || [])[0]);
+      // 兼容 targetIds, items, 或你测试集中的 targetName (需转换)
+      const items = jsonNode.params?.targetIds || jsonNode.params?.items || [];
+      const delay = jsonNode.params?.delay || 0;
+      node = new ForeachNode(child, items, delay);
+      break;
+    }
+    case 'inside': {
+      const child = jsonNode.child ? this.parseNode(jsonNode.child) : this.parseNode((jsonNode.children || [])[0]);
+      node = new InsideNode(child, jsonNode.params);
+      break;
+    }
+    case 'action':
+      node = new ActionNode(jsonNode.name, jsonNode.params, jsonNode.duration);
+      break;
+    case 'condition':
+      node = new ConditionNode(jsonNode.name, jsonNode.params);
+      break;
+    default:
+      console.warn("未知的行为树节点类型", jsonNode.node);
+      return null;
+  }
+
+  if (node) node.id = id; // 将 ID 挂载到节点实例上
+  return node;
+}
+  parseNode_(jsonNode) {
     if (!jsonNode) return null;
+    const id = jsonNode.id || null;
+    let node = null;
+
+
     switch (jsonNode.node) {
       case 'sequence':
-        return new SequenceNode((jsonNode.children || []).map(c => this.parseNode(c)).filter(Boolean));
+        node = new SequenceNode((jsonNode.children || []).map(c => this.parseNode(c)).filter(Boolean));
+        break
       case 'selector':
-        return new SelectorNode((jsonNode.children || []).map(c => this.parseNode(c)).filter(Boolean));
+        node =  new SelectorNode((jsonNode.children || []).map(c => this.parseNode(c)).filter(Boolean));
+        break
       case 'parallel':
-        return new ParallelNode((jsonNode.children || []).map(c => this.parseNode(c)).filter(Boolean));
+        node =  new ParallelNode((jsonNode.children || []).map(c => this.parseNode(c)).filter(Boolean));
+        break
       case 'repeat': {
         const child = jsonNode.child ? this.parseNode(jsonNode.child) : this.parseNode((jsonNode.children || [])[0]);
         const count = jsonNode.params?.count ?? jsonNode.count ?? 1;
         const delay = jsonNode.params?.delay || 0;
-        return new RepeatNode(child, count, delay);
+        node =  new RepeatNode(child, count, delay);
+        break
       }
       case 'foreach': {
         const child = jsonNode.child ? this.parseNode(jsonNode.child) : this.parseNode((jsonNode.children || [])[0]);
         const items = jsonNode.params?.targetIds || jsonNode.params?.items || [];
         const delay = jsonNode.params?.delay || 0;
-        return new ForeachNode(child, items, delay);
+        node = new ForeachNode(child, items, delay);
+        break
       }
       case 'inside': {
         const child = jsonNode.child ? this.parseNode(jsonNode.child) : this.parseNode((jsonNode.children || [])[0]);
-        return new InsideNode(child, jsonNode.params);
+        node =  new InsideNode(child, jsonNode.params);
+        break
       }
       case 'action':
-        return new ActionNode(jsonNode.name, jsonNode.params, jsonNode.duration);
+        node =  new ActionNode(jsonNode.name, jsonNode.params, jsonNode.duration);
+        break
       case 'condition':
-        return new ConditionNode(jsonNode.name, jsonNode.params);
+        node = new ConditionNode(jsonNode.name, jsonNode.params);
+        break
       default:
         console.warn("未知的行为树节点类型", jsonNode.node);
         return null;
     }
+    if (node) node.id = id; // 将 ID 挂载到节点实例上
+    return node;
+
   }
 
   start() {
@@ -640,28 +818,119 @@ export class BTEngine {
     }
   }
 
+  handleDragEnd(target, event) {
+    if (!target || !target.id || !this.draggingObjects.has(target.id)) return;
+    target.setCoords();
+    const start = this.dragStartPositions.get(target.id);
+    const end = { left: target.left, top: target.top };
+    const vector = start ? { x: end.left - start.left, y: end.top - start.top } : null;
+    this.draggingObjects.delete(target.id);
+    this.dragStartPositions.delete(target.id);
+    const dropMeta = {
+      dragStart: start,
+      dragEnd: end,
+      dragVector: vector,
+      droppedObjectId: target.id,
+      slingshotReleasePoint: end
+    };
+    const slingshotBaseId = this.draggingOverSlingshot.get(target.id);
+    this.draggingOverSlingshot.delete(target.id);
+    this.handleTriggerEvent('onDragEnd', event, {
+      ...dropMeta,
+      targetId: target.id
+    });
+
+    if (slingshotBaseId) {
+      const canvas = this.canvasManager.canvas;
+      const baseFabric = canvas?.getObjects()?.find(o => o.id === slingshotBaseId);
+      if (baseFabric) {
+        baseFabric.setCoords();
+        const scaledWidth = (baseFabric.width ?? 0) * (baseFabric.scaleX ?? 1);
+        const scaledHeight = (baseFabric.height ?? 0) * (baseFabric.scaleY ?? 1);
+        const baseCenter = {
+          x: baseFabric.left + scaledWidth / 2,
+          y: baseFabric.top + scaledHeight / 2
+        };
+        this.handleTriggerEvent('onSlingshotDrop', { target: baseFabric }, {
+          ...dropMeta,
+          targetId: slingshotBaseId,
+          slingshotBaseCenter: baseCenter
+        });
+      }
+    }
+  }
+
   bindTriggers() {
     const canvas = this.canvasManager.canvas;
-    canvas.on('mouse:down', (e) => this.handleTriggerEvent('onClick', e));
+      canvas.on('mouse:down', (e) => {
+        this.mouseDownTargetId = e?.target?.id ?? null;
+        if (this.mouseDownTargetId) {
+          this.mouseDragCandidates.delete(this.mouseDownTargetId);
+        }
+      });
     canvas.on('mouse:over', (e) => this.handleTriggerEvent('onHover', e));
     canvas.on('mouse:out', (e) => this.handleTriggerEvent('onHoverOut', e));
-    canvas.on('object:moving', (e) => {
-      const target = e.target;
-      if (!target || !target.id) return;
-      if (this.draggingObjects.has(target.id)) return;
-      this.draggingObjects.add(target.id);
+      canvas.on('object:moving', (e) => {
+        const target = e.target;
+        if (!target || !target.id) return;
+        if (this.draggingObjects.has(target.id)) return;
+        this.draggingObjects.add(target.id);
+        const startPos = { left: target.left, top: target.top };
+        this.dragStartPositions.set(target.id, startPos);
+        this.mouseDragCandidates.add(target.id);
+        this.handleTriggerEvent('onDragStart', e, { dragStart: startPos });
+        if (!this.draggingOverSlingshot.has(target.id)) {
+        const width = (target.width ?? (target.radius ? target.radius * 2 : 0)) * (target.scaleX ?? 1);
+        const height = (target.height ?? (target.radius ? target.radius * 2 : 0)) * (target.scaleY ?? 1);
+        const startBounds = { left: startPos.left, top: startPos.top, width, height };
+        const base = this.findSlingshotBaseForBounds(startBounds);
+        if (base) {
+          this.draggingOverSlingshot.set(target.id, base.id);
+        }
+      }
       this.handleTriggerEvent('onDrag', e);
     });
     canvas.on('mouse:up', (e) => {
-      if (e?.target?.id) {
-        this.draggingObjects.delete(e.target.id);
-      } else {
-        this.draggingObjects.clear();
+      const target = e?.target;
+      if (target && target.id && this.draggingObjects.has(target.id)) {
+        this.handleDragEnd(target, e);
+        this.mouseDragCandidates.delete(target.id);
+        if (this.mouseDownTargetId === target.id) {
+          this.mouseDownTargetId = null;
+        }
+        return;
+      }
+
+      if (target && target.id && this.mouseDownTargetId === target.id && !this.mouseDragCandidates.has(target.id)) {
+        this.handleTriggerEvent('onClick', e, { targetId: target.id });
+      }
+      if (target && target.id) {
+        this.mouseDragCandidates.delete(target.id);
+      }
+      if (this.draggingObjects.size > 0) {
+        const ids = Array.from(this.draggingObjects);
+        ids.forEach(id => {
+          const obj = canvas.getObjects().find(o => o.id === id);
+          if (obj) {
+            this.handleDragEnd(obj, e);
+          } else {
+            this.draggingObjects.delete(id);
+            this.dragStartPositions.delete(id);
+            this.draggingOverSlingshot.delete(id);
+          }
+        });
       }
     });
     canvas.on('object:removed', (e) => {
       if (e?.target?.id) {
         this.cleanupTimersForObject(e.target.id);
+        this.draggingObjects.delete(e.target.id);
+        this.dragStartPositions.delete(e.target.id);
+        this.draggingOverSlingshot.delete(e.target.id);
+        this.mouseDragCandidates.delete(e.target.id);
+        if (this.mouseDownTargetId === e.target.id) {
+          this.mouseDownTargetId = null;
+        }
       }
     });
   }

@@ -51,6 +51,7 @@ export class CanvasManager {
   // 重新渲染整个画布 (保留了你极其优秀的 Diff 算法和完整图形支持)
   renderAll() {
     const isEditable = this.mode === 'edit';
+    const isInteractionMode = this.mode === 'play';
     const currentCanvasObjects = this.canvas.getObjects();
     const dataIds = this.objectsData.map(o => o.id);
 
@@ -67,19 +68,22 @@ export class CanvasManager {
       const scaleX = objData.scaleX ?? 1;
       const scaleY = objData.scaleY ?? objData.scaleX ?? 1;
 
+      const isLocked = !!objData.locked;
+      const shouldAllowInteraction = isInteractionMode && this.currentTool === 'select';
+      const selectable = !isLocked && ((isEditable && this.currentTool === 'select') || shouldAllowInteraction);
       const commonProps = {
         left: objData.x,
         top: objData.y,
         fill: objData.fillColor || 'transparent',
         scaleX,
         scaleY,
-        // selectable: isEditable && (this.currentTool === 'select' || this.currentTool === 'erase'),
-        selectable: true,
-        hoverCursor: isEditable && this.currentTool === 'select' ? 'move' : 'default',
-        hasControls: isEditable, // 只有编辑模式显示缩放旋转手柄
-        hasBorders: isEditable,  // 只有编辑模式显示边框
-        lockMovementX: false,    // 允许移动
-        lockMovementY: false,
+        selectable,
+        hoverCursor: isLocked ? 'default' : (shouldAllowInteraction ? 'grab' : (isEditable && this.currentTool === 'select' ? 'move' : 'default')),
+        hasControls: isEditable && !isLocked, // 只有编辑模式显示缩放旋转手柄
+        hasBorders: isEditable && !isLocked,  // 只有编辑模式显示边框
+        lockMovementX: isLocked,
+        lockMovementY: isLocked,
+        evented: !isLocked
       };
 
       if (fObj) {
@@ -186,19 +190,30 @@ export class CanvasManager {
     }
   }
 
-  // 更新所有物体的交互状态 (合并了两个重名的函数)
+  // 更新所有物体的交互状态
   updateAllObjectsInteractiveState(allowSelect = true, isEraseMode = false) {
     const isEditable = this.mode === 'edit';
-    const selectable = isEditable && allowSelect;
+    const isInteractionMode = this.mode === 'play';
+    const overallSelectable = (isEditable && allowSelect) || (isInteractionMode && allowSelect);
 
     this.canvas.getObjects().forEach(obj => {
+      const data = this.objectsData.find(o => o.id === obj.id);
+      const isLocked = !!data?.locked;
+      const interactionSelectable = isInteractionMode && allowSelect;
+      const selectable = !isLocked && ((isEditable && allowSelect) || interactionSelectable);
       obj.set({
-        selectable: selectable,
-        evented: true,
-        hoverCursor: isEraseMode ? 'crosshair' : (selectable ? 'move' : 'default')
+        selectable,
+        evented: !isLocked,
+        hoverCursor: isLocked ? 'default' : (isEraseMode ? 'crosshair' : (interactionSelectable ? 'grab' : (selectable ? 'move' : 'default'))),
+        lockMovementX: isLocked,
+        lockMovementY: isLocked
       });
-      if (!selectable) this.canvas.discardActiveObject();
     });
+
+    if (!overallSelectable) {
+      this.canvas.discardActiveObject();
+    }
+
     this.canvas.requestRenderAll();
   }
 

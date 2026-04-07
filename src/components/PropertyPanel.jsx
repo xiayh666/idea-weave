@@ -177,10 +177,9 @@ export const PropertyPanel = ({ selectedObj, selectedId, updateObject, mode, onD
         </section>
 
         {/* 交互部分 */}
-                  {/* 浜や簰閮ㄥ垎 */}
           <section style={styles.section}>
             <div style={styles.sectionHeader}>
-              <Zap size={10} /> 浜や簰琛屼负 / Behaviors
+              <Zap size={10} /> 行为 / Behaviors
             </div>
             <div style={styles.behaviorList}>
               {selectedObj.behaviors?.length ? selectedObj.behaviors.map(b => (
